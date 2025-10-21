@@ -1,0 +1,3442 @@
+const express = require('express');
+const sql = require('mssql');
+const cors = require('cors');
+const path = require('path');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+app.use(express.static(path.join(__dirname, '../Frontend')));
+
+// Configuración de la base de datos
+const dbConfig = {
+    server: 'localhost',
+    database: 'Tarea2',
+    user: 'TareaBases2',
+    password: 'TareaBases2',
+    options: {
+        enableArithAbort: true,
+        trustServerCertificate: true
+    },
+    pool: {
+        max: 10,
+        min: 0,
+        idleTimeoutMillis: 30000
+    }
+};
+
+let pool;
+
+// Conectar a la base de datos
+async function connectDB() {
+    try {
+        pool = await sql.connect(dbConfig);
+        console.log('Conectado a SQL Server');
+    } catch (err) {
+        console.error('Error conectando a la base de datos:', err);
+    }
+}
+
+connectDB();
+
+app.post('/api/login', async (req, res) => {
+    let transaction;
+    
+    try {
+        const { usuario, contraseña } = req.body;
+        
+        // Validación básica
+        if (!usuario || !contraseña) {
+            return res.status(400).json({
+                success: false,
+                message: 'Usuario y contraseña son requeridos'
+            });
+        }
+
+        console.log('📝 Intento de login:', { usuario });
+        
+        // Obtener IP del cliente
+        const clientIP = req.ip || 
+                        req.connection.remoteAddress || 
+                        req.socket.remoteAddress ||
+                        (req.connection.socket ? req.connection.socket.remoteAddress : null);
+        
+        const cleanIP = clientIP ? clientIP.replace('::ffff:', '') : '127.0.0.1';
+
+        // Iniciar transacción
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const request = new sql.Request(transaction);
+
+        // Configurar parámetros EXACTOS como el SP los espera
+        request.input('inUsername', sql.VarChar(64), usuario);
+        request.input('inPassword', sql.VarChar(64), contraseña);
+        request.input('inIP', sql.VarChar(32), cleanIP);
+        request.output('outResultCode', sql.Int);
+        request.output('outUserId', sql.Int);
+
+        console.log('🔧 Ejecutando SP dbo.sp_ValidarLogin con parámetros:', {
+            username: usuario,
+            password: contraseña,
+            ip: cleanIP
+        });
+
+        const result = await request.execute('dbo.sp_ValidarLogin');
+
+        // Obtener los resultados
+        const outResultCode = result.output.outResultCode;
+        const outUserId = result.output.outUserId;
+
+        console.log('📊 Resultado del SP dbo.sp_ValidarLogin:', {
+            resultCode: outResultCode,
+            userId: outUserId
+        });
+
+        if (outResultCode === 0) {
+            // Login exitoso
+            await transaction.commit();
+            
+            console.log('✅ Login exitoso para usuario ID:', outUserId);
+            
+            res.json({
+                success: true,
+                message: 'Login exitoso',
+                userId: outUserId,
+                username: usuario
+            });
+            
+        } else if (outResultCode === 50001) {
+            // Username no existe
+            await transaction.commit();
+            
+            console.log('❌ Usuario no existe:', usuario);
+            
+            res.status(401).json({
+                success: false,
+                message: 'Usuario no encontrado',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50002) {
+            // Password incorrecto
+            await transaction.commit();
+            
+            console.log('❌ Contraseña incorrecta para usuario:', usuario);
+            
+            res.status(401).json({
+                success: false,
+                message: 'Contraseña incorrecta',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50003) {
+            // Login deshabilitado por intentos
+            await transaction.commit();
+            
+            console.log('❌ Usuario bloqueado por intentos:', usuario);
+            
+            res.status(401).json({
+                success: false,
+                message: 'Usuario bloqueado por múltiples intentos fallidos. Espere 5 minutos.',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50008) {
+            // Error de base de datos
+            await transaction.rollback();
+            
+            console.log('❌ Error de base de datos en login');
+            
+            res.status(500).json({
+                success: false,
+                message: 'Error interno de base de datos',
+                resultCode: outResultCode
+            });
+            
+        } else {
+            // Otro error desconocido
+            await transaction.rollback();
+            
+            console.log('❌ Error desconocido en login:', outResultCode);
+            
+            res.status(500).json({
+                success: false,
+                message: 'Error en el proceso de login',
+                resultCode: outResultCode
+            });
+        }
+
+    } catch (error) {
+        console.error('❌ Error en login:', error);
+
+        if (transaction) {
+            try {
+                await transaction.rollback();
+                console.log('🔄 Transacción revertida');
+            } catch (rollbackError) {
+                console.error('Error haciendo rollback:', rollbackError);
+            }
+        }
+
+        // Mensaje más específico según el error
+        let errorMessage = 'Error del servidor durante el login';
+        
+        if (error.message.includes('Could not find stored procedure')) {
+            errorMessage = 'Error: El stored procedure dbo.sp_ValidarLogin no existe.';
+        } else if (error.message.includes('Timeout')) {
+            errorMessage = 'Error: Timeout de conexión a la base de datos';
+        }
+
+        res.status(500).json({
+            success: false,
+            message: errorMessage
+        });
+    }
+});
+
+
+app.get('/api/empleados/:id/movimientos', async (req, res) => {
+    let transaction;
+    
+    try {
+        const empleadoId = parseInt(req.params.id);
+        const userId = req.query.userId || 1; 
+        const clientIP = req.ip ? req.ip.replace('::ffff:', '') : '127.0.0.1';
+
+        console.log('🔍 Solicitando movimientos para empleado:', {
+            empleadoId,
+            userId,
+            ip: clientIP
+        });
+
+        // Validar ID del empleado
+        if (!empleadoId || isNaN(empleadoId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID de empleado inválido'
+            });
+        }
+
+        // Iniciar transacción
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const request = new sql.Request(transaction);
+        
+        // Configurar parámetros
+        request.input('inIdEmpleado', sql.Int, empleadoId);
+        request.input('inUserId', sql.Int, parseInt(userId));
+        request.input('inIP', sql.VarChar(32), clientIP);
+        request.output('outResultCode', sql.Int);
+
+        console.log('🔧 Ejecutando SP sp_ListarMovimientosEmpleado con:', {
+            empleadoId,
+            userId,
+            ip: clientIP
+        });
+
+        const result = await request.execute('sp_ListarMovimientosEmpleado');
+
+        const outResultCode = result.output.outResultCode;
+
+        if (outResultCode === 0) {
+            await transaction.commit();
+            
+            console.log(`✅ SP ejecutado correctamente, ${result.recordset.length} movimientos encontrados`);
+            
+            const movimientos = result.recordset.map(mov => ({
+                Id: mov.Id || null, 
+                Fecha: mov.Fecha,
+                TipoMovimiento: mov.TipoMovimiento,
+                Monto: mov.Monto,
+                NuevoSaldo: mov.NuevoSaldo,
+                UsuarioNombre: mov.UsuarioRegistra,
+                IP: mov.PostInIP,
+                PostTime: mov.PostTime,
+                FechaMovimiento: mov.Fecha
+            }));
+            
+            res.json(movimientos);
+            
+        } else if (outResultCode === 50008) {
+            // Error de base de datos
+            await transaction.rollback();
+            
+            console.log('❌ Error de base de datos en SP sp_ListarMovimientosEmpleado');
+            
+            res.status(500).json({ 
+                success: false, 
+                message: 'Error de base de datos al obtener movimientos',
+                resultCode: outResultCode
+            });
+            
+        } else {
+            await transaction.rollback();
+            
+            console.log('❌ Error desconocido en SP sp_ListarMovimientosEmpleado:', outResultCode);
+            
+            res.status(500).json({ 
+                success: false, 
+                message: 'Error obteniendo movimientos',
+                resultCode: outResultCode
+            });
+        }
+
+    } catch (error) {
+        console.error('❌ Error obteniendo movimientos:', error);
+
+        if (transaction) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackError) {
+                console.error('Error en rollback:', rollbackError);
+            }
+        }
+
+        let errorMessage = 'Error del servidor al obtener movimientos';
+        
+        if (error.message.includes('Could not find stored procedure')) {
+            errorMessage = 'Error: El stored procedure sp_ListarMovimientosEmpleado no existe.';
+        } else if (error.message.includes('Timeout')) {
+            errorMessage = 'Error: Timeout de conexión a la base de datos';
+        }
+
+        res.status(500).json({ 
+            success: false, 
+            message: errorMessage + ': ' + error.message
+        });
+    }
+});
+
+// Endpoint para logout
+app.post('/api/logout', async (req, res) => {
+    try {
+        const { userId, username } = req.body;
+        
+        console.log('📝 Logout realizado:', { userId, username });
+        
+        res.json({
+            success: true,
+            message: 'Logout exitoso'
+        });
+        
+    } catch (error) {
+        console.error('Error en logout:', error);
+        res.json({
+            success: false,
+            message: 'Logout completado pero con error en bitácora'
+        });
+    }
+});
+
+// Endpoint para obtener puesto
+app.get('/api/puestos', async (req, res) => {
+    try {
+        console.log('🔍 Iniciando obtención de puestos...');
+        
+        // Verificar si la conexión a BD está activa
+        if (!pool || !pool.connected) {
+            console.log('⚠️ Pool no conectado, reconectando...');
+            await connectDB();
+        }
+
+        // Intentar consulta simple primero
+        let result;
+        try {
+            console.log('📋 Ejecutando query de puestos...');
+            result = await pool.request().query(`
+                SELECT 
+                    Id,
+                    Nombre
+                FROM Puesto 
+                ORDER BY Nombre
+            `);
+            console.log('✅ Query ejecutado correctamente');
+        } catch (queryError) {
+            console.error('❌ Error en query:', queryError.message);
+            
+            console.log('🔄 Devolviendo puestos de ejemplo...');
+            const puestosEjemplo = [
+                { Id: 1, Nombre: 'Albañil' },
+                { Id: 2, Nombre: 'Asistente' },
+                { Id: 3, Nombre: 'Cajero' },
+                { Id: 4, Nombre: 'Camarero' },
+                { Id: 5, Nombre: 'Conductor' },
+                { Id: 6, Nombre: 'Conserje' },
+                { Id: 7, Nombre: 'Cuidador' },
+                { Id: 8, Nombre: 'Fontanero' },
+                { Id: 9, Nombre: 'Niñera' },
+                { Id: 10, Nombre: 'Recepcionista' }
+            ];
+            
+            return res.json(puestosEjemplo);
+        }
+
+        console.log(`📊 Puestos obtenidos: ${result.recordset.length} registros`);
+        
+        if (result.recordset.length === 0) {
+            console.log('⚠️ No hay puestos en la BD, usando datos de ejemplo');
+            const puestosEjemplo = [
+                { Id: 1, Nombre: 'Gerente' },
+                { Id: 2, Nombre: 'Supervisor' },
+                { Id: 3, Nombre: 'Asistente' }
+            ];
+            return res.json(puestosEjemplo);
+        }
+
+        if (result.recordset.length > 0) {
+            console.log('📝 Primer puesto:', result.recordset[0]);
+        }
+
+        res.json(result.recordset);
+        
+    } catch (error) {
+        console.error('💥 ERROR CRÍTICO en endpoint /api/puestos:', error);
+        console.error('🔍 Stack trace:', error.stack);
+        
+
+        const puestosEjemplo = [
+            { Id: 1, Nombre: 'Albañil' },
+            { Id: 2, Nombre: 'Asistente' },
+            { Id: 3, Nombre: 'Cajero' },
+            { Id: 4, Nombre: 'Camarero' },
+            { Id: 5, Nombre: 'Conductor' }
+        ];
+        
+        res.json(puestosEjemplo);
+    }
+});
+
+// Endpoint para obtener empleados
+app.get('/api/empleados', async (req, res) => {
+    let transaction;
+    
+    try {
+        const { filtro } = req.query;
+        const userId = 1; 
+        const clientIP = req.ip ? req.ip.replace('::ffff:', '') : '127.0.0.1';
+
+        // Iniciar transacción
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const request = new sql.Request(transaction);
+        
+        // Configurar parámetros
+        request.input('inFiltro', sql.VarChar(100), filtro || null);
+        request.input('inUserId', sql.Int, userId);
+        request.input('inIP', sql.VarChar(32), clientIP);
+        request.output('outResultCode', sql.Int);
+
+        console.log('🔧 Ejecutando SP sp_ListarEmpleados con:', {
+            filtro: filtro || 'null',
+            userId,
+            ip: clientIP
+        });
+
+        const result = await request.execute('sp_ListarEmpleados');
+
+        const outResultCode = result.output.outResultCode;
+
+        if (outResultCode === 0) {
+            await transaction.commit();
+            
+            console.log(`✅ SP ejecutado correctamente, ${result.recordset.length} empleados`);
+            
+            res.json(result.recordset);
+            
+        } else {
+            await transaction.rollback();
+            
+            console.log('❌ Error en SP sp_ListarEmpleados:', outResultCode);
+            
+            res.status(500).json({ 
+                success: false, 
+                message: 'Error obteniendo empleados',
+                resultCode: outResultCode
+            });
+        }
+
+    } catch (error) {
+        console.error('❌ Error obteniendo empleados:', error);
+
+        if (transaction) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackError) {
+                console.error('Error en rollback:', rollbackError);
+            }
+        }
+
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error del servidor al obtener empleados: ' + error.message
+        });
+    }
+});
+
+// Insertar empleados
+app.post('/api/empleados', async (req, res) => {
+    let transaction;
+    
+    try {
+        const { 
+            idPuesto, 
+            valorDocumentoIdentidad, 
+            nombre, 
+            fechaContratacion,
+            userId 
+        } = req.body;
+
+        console.log('📥 Datos recibidos para insertar empleado:', req.body);
+
+        // Validaciones básicas
+        if (!idPuesto || !valorDocumentoIdentidad || !nombre || !fechaContratacion) {
+            return res.status(400).json({
+                success: false,
+                message: 'Todos los campos son requeridos'
+            });
+        }
+
+        const clientIP = req.ip ? req.ip.replace('::ffff:', '') : '127.0.0.1';
+
+        // Iniciar transacción
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const request = new sql.Request(transaction);
+
+        request.input('inIdPuesto', sql.Int, parseInt(idPuesto));
+        request.input('inValorDocumentoIdentidad', sql.VarChar(32), valorDocumentoIdentidad);
+        request.input('inNombre', sql.VarChar(128), nombre);
+        request.input('inFechaContratacion', sql.Date, fechaContratacion);
+        request.input('inUserId', sql.Int, parseInt(userId) || 1);
+        request.input('inIP', sql.VarChar(32), clientIP);
+        request.output('outResultCode', sql.Int);
+
+        console.log('🔧 Ejecutando SP sp_InsertarEmpleado con:', {
+            idPuesto,
+            valorDocumentoIdentidad,
+            nombre,
+            fechaContratacion,
+            userId: userId || 1,
+            ip: clientIP
+        });
+
+        const result = await request.execute('sp_InsertarEmpleado');
+
+        const outResultCode = result.output.outResultCode;
+
+        console.log('📊 Resultado del SP sp_InsertarEmpleado:', outResultCode);
+
+        if (outResultCode === 0) {
+            await transaction.commit();
+            
+            console.log('✅ Empleado insertado exitosamente');
+            
+            res.json({
+                success: true,
+                message: 'Empleado insertado correctamente',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50010) {
+            // Documento no numérico
+            await transaction.rollback();
+            
+            res.status(400).json({
+                success: false,
+                message: 'La cédula debe contener solo números',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50009) {
+            // Nombre no alfabético
+            await transaction.rollback();
+            
+            res.status(400).json({
+                success: false,
+                message: 'El nombre debe contener solo letras y espacios',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50004) {
+            // Documento duplicado
+            await transaction.rollback();
+            
+            res.status(400).json({
+                success: false,
+                message: 'Ya existe un empleado con esta cédula',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50005) {
+            // Nombre duplicado
+            await transaction.rollback();
+            
+            res.status(400).json({
+                success: false,
+                message: 'Ya existe un empleado con este nombre',
+                resultCode: outResultCode
+            });
+            
+        } else {
+            await transaction.rollback();
+            
+            res.status(500).json({
+                success: false,
+                message: 'Error al insertar empleado',
+                resultCode: outResultCode
+            });
+        }
+
+    } catch (error) {
+        console.error('❌ Error insertando empleado:', error);
+
+        if (transaction) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackError) {
+                console.error('Error en rollback:', rollbackError);
+            }
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Error del servidor al insertar empleado: ' + error.message
+        });
+    }
+});
+
+// Endpoint para obtener tipos de movimiento
+app.get('/api/tipos-movimiento', async (req, res) => {
+    try {
+        const result = await pool.request().query(`
+            SELECT 
+                Id,
+                Nombre,
+                TipoAccion
+            FROM TipoMovimiento 
+            ORDER BY Id
+        `);
+        
+        res.json(result.recordset);
+    } catch (error) {
+        console.error('Error obteniendo tipos de movimiento:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error obteniendo tipos de movimiento' 
+        });
+    }
+});
+
+// Insertar movimiento
+app.post('/api/movimientos', async (req, res) => {
+    let transaction;
+    
+    try {
+        const { 
+            valorDocumentoIdentidad, 
+            idTipoMovimiento, 
+            monto, 
+            userId, 
+            ip 
+        } = req.body;
+
+        console.log('📥 Datos recibidos:', req.body);
+
+        // Validaciones básicas
+        if (!valorDocumentoIdentidad || !idTipoMovimiento || !monto) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cédula, tipo de movimiento y monto son requeridos'
+            });
+        }
+
+        // Validar que el monto sea un número positivo
+        if (isNaN(monto) || monto <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'El monto debe ser un número positivo'
+            });
+        }
+
+        // Iniciar transacción
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const request = new sql.Request(transaction);
+
+        request.input('inValorDocumentoIdentidad', sql.VarChar(32), valorDocumentoIdentidad);
+        request.input('inIdTipoMovimiento', sql.Int, parseInt(idTipoMovimiento));
+        request.input('inMonto', sql.Int, parseInt(monto));
+        request.input('inUserId', sql.Int, parseInt(userId) || 1);
+        request.input('inIP', sql.VarChar(32), ip || '127.0.0.1');
+        request.output('outResultCode', sql.Int, 0);
+
+        console.log('🔧 Ejecutando SP con parámetros:', {
+            valorDocumentoIdentidad,
+            idTipoMovimiento,
+            monto,
+            userId: userId || 1,
+            ip: ip || '127.0.0.1'
+        });
+
+        // Ejecutar el stored procedure
+        const result = await request.execute('sp_InsertarMovimiento');
+
+        // Obtener el código de resultado
+        const outResultCode = result.output.outResultCode;
+
+        console.log('📊 Resultado del SP:', outResultCode);
+
+        // Manejar resultados según el código
+        if (outResultCode === 0) {
+            await transaction.commit();
+            
+            console.log('✅ Movimiento insertado exitosamente');
+            
+            res.json({
+                success: true,
+                message: 'Movimiento agregado correctamente',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50011) {
+            // Saldo negativo
+            await transaction.rollback();
+            
+            console.log('❌ Error: Saldo insuficiente');
+            
+            res.status(400).json({
+                success: false,
+                message: 'No hay suficiente saldo para realizar esta operación',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50008) {
+            // Empleado o tipo de movimiento no encontrado
+            await transaction.rollback();
+            
+            console.log('❌ Error: Empleado o tipo de movimiento no encontrado');
+            
+            res.status(404).json({
+                success: false,
+                message: 'Empleado o tipo de movimiento no encontrado',
+                resultCode: outResultCode
+            });
+            
+        } else {
+            await transaction.rollback();
+            
+            console.log('❌ Error desconocido del SP:', outResultCode);
+            
+            res.status(400).json({
+                success: false,
+                message: 'Error al procesar el movimiento',
+                resultCode: outResultCode
+            });
+        }
+
+    } catch (error) {
+        console.error('❌ Error agregando movimiento:', error);
+
+        if (transaction) {
+            try {
+                await transaction.rollback();
+                console.log('🔄 Transacción revertida');
+            } catch (rollbackError) {
+                console.error('Error haciendo rollback:', rollbackError);
+            }
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Error del servidor al procesar el movimiento'
+        });
+    }
+});
+
+// Actualizar empleado
+app.put('/api/empleados/:id', async (req, res) => {
+    let transaction;
+    
+    try {
+        const empleadoId = parseInt(req.params.id);
+        const { 
+            idPuesto, 
+            valorDocumentoIdentidad, 
+            nombre,
+            userId 
+        } = req.body;
+
+        console.log('📥 Datos recibidos para actualizar empleado:', {
+            empleadoId,
+            idPuesto,
+            valorDocumentoIdentidad,
+            nombre,
+            userId
+        });
+
+        // Validaciones básicas
+        if (!idPuesto || !valorDocumentoIdentidad || !nombre) {
+            return res.status(400).json({
+                success: false,
+                message: 'Todos los campos son requeridos'
+            });
+        }
+
+        const clientIP = req.ip ? req.ip.replace('::ffff:', '') : '127.0.0.1';
+
+        // Iniciar transacción
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const request = new sql.Request(transaction);
+
+        request.input('inIdEmpleado', sql.Int, empleadoId);
+        request.input('inIdPuesto', sql.Int, parseInt(idPuesto));
+        request.input('inValorDocumentoIdentidad', sql.VarChar(32), valorDocumentoIdentidad);
+        request.input('inNombre', sql.VarChar(128), nombre);
+        request.input('inUserId', sql.Int, parseInt(userId) || 1);
+        request.input('inIP', sql.VarChar(32), clientIP);
+        request.output('outResultCode', sql.Int);
+
+        console.log('🔧 Ejecutando SP sp_ActualizarEmpleado...');
+
+        const result = await request.execute('sp_ActualizarEmpleado');
+
+        const outResultCode = result.output.outResultCode;
+
+        console.log('📊 Resultado del SP sp_ActualizarEmpleado:', outResultCode);
+
+        // Manejar resultados según el código
+        if (outResultCode === 0) {
+            await transaction.commit();
+            
+            console.log('✅ Empleado actualizado exitosamente');
+            
+            res.json({
+                success: true,
+                message: 'Empleado actualizado correctamente',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50010) {
+            // Documento no numérico
+            await transaction.rollback();
+            
+            res.status(400).json({
+                success: false,
+                message: 'La cédula debe contener solo números',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50006) {
+            // Documento duplicado en actualización
+            await transaction.rollback();
+            
+            res.status(400).json({
+                success: false,
+                message: 'Ya existe otro empleado con esta cédula',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50007) {
+            // Nombre duplicado en actualización
+            await transaction.rollback();
+            
+            res.status(400).json({
+                success: false,
+                message: 'Ya existe otro empleado con este nombre',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50008) {
+            // Empleado no existe
+            await transaction.rollback();
+            
+            res.status(404).json({
+                success: false,
+                message: 'Empleado no encontrado',
+                resultCode: outResultCode
+            });
+            
+        } else {
+            await transaction.rollback();
+            
+            res.status(500).json({
+                success: false,
+                message: 'Error al actualizar empleado',
+                resultCode: outResultCode
+            });
+        }
+
+    } catch (error) {
+        console.error('❌ Error actualizando empleado:', error);
+
+        if (transaction) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackError) {
+                console.error('Error en rollback:', rollbackError);
+            }
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Error del servidor al actualizar empleado: ' + error.message
+        });
+    }
+});
+
+//Eliminar empleado
+app.delete('/api/empleados/:id', async (req, res) => {
+    let transaction;
+    
+    try {
+        const empleadoId = parseInt(req.params.id);
+        const { userId } = req.body;
+
+        console.log('🗑️ Solicitando eliminar empleado:', {
+            empleadoId,
+            userId
+        });
+
+        const clientIP = req.ip ? req.ip.replace('::ffff:', '') : '127.0.0.1';
+
+        // Iniciar transacción
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        const request = new sql.Request(transaction);
+
+        // Configurar parámetros para el SP
+        request.input('inIdEmpleado', sql.Int, empleadoId);
+        request.input('inUserId', sql.Int, parseInt(userId) || 1);
+        request.input('inIP', sql.VarChar(32), clientIP);
+        request.output('outResultCode', sql.Int);
+
+        console.log('🔧 Ejecutando SP sp_EliminarEmpleado...');
+
+        // Ejecutar el stored procedure
+        const result = await request.execute('sp_EliminarEmpleado');
+
+        const outResultCode = result.output.outResultCode;
+
+        console.log('📊 Resultado del SP sp_EliminarEmpleado:', outResultCode);
+
+        // Manejar resultados según el código
+        if (outResultCode === 0) {
+            await transaction.commit();
+            
+            console.log('✅ Empleado eliminado exitosamente');
+            
+            res.json({
+                success: true,
+                message: 'Empleado eliminado correctamente',
+                resultCode: outResultCode
+            });
+            
+        } else if (outResultCode === 50008) {
+            // Empleado no existe
+            await transaction.rollback();
+            
+            res.status(404).json({
+                success: false,
+                message: 'Empleado no encontrado',
+                resultCode: outResultCode
+            });
+            
+        } else {
+            await transaction.rollback();
+            
+            res.status(500).json({
+                success: false,
+                message: 'Error al eliminar empleado',
+                resultCode: outResultCode
+            });
+        }
+
+    } catch (error) {
+        console.error('❌ Error eliminando empleado:', error);
+
+        if (transaction) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackError) {
+                console.error('Error en rollback:', rollbackError);
+            }
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Error del servidor al eliminar empleado: ' + error.message
+        });
+    }
+});
+
+app.get('/api/mi-ip', (req, res) => {
+    const clientIP = req.ip || req.connection.remoteAddress;
+    res.json({ ip: clientIP });
+});
+
+// Endpoint de salud
+app.get('/api/health', async (req, res) => {
+    try {
+        await pool.request().query('SELECT 1 as health');
+        res.json({ 
+            status: 'OK', 
+            database: 'Connected',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            status: 'Error', 
+            database: 'Disconnected',
+            error: error.message 
+        });
+    }
+});
+
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../Frontend/login.html'));
+});
+
+app.get('/login.html', (req, res) => {
+    res.sendFile(path.join(__dirname, '../Frontend/login.html'));
+});
+
+app.get('/tabla.html', (req, res) => {
+    res.sendFile(path.join(__dirname, '../Frontend/tabla.html'));
+});
+
+app.get('/insertar-movimiento.html', (req, res) => {
+    res.sendFile(path.join(__dirname, '../Frontend/insertar-movimiento.html'));
+});
+
+app.get('/actualizar.html', (req, res) => {
+    res.sendFile(path.join(__dirname, '../Frontend/actualizar.html'));
+});
+
+app.get('/movimientos.html', (req, res) => {
+    res.sendFile(path.join(__dirname, '../Frontend/movimientos.html'));
+});
+
+// Manejo de errores global
+app.use((error, req, res, next) => {
+    console.error('Error global:', error);
+    res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+    });
+});
+
+// Ruta no encontrada
+app.use('*', (req, res) => {
+    res.status(404).json({
+        success: false,
+        message: 'Ruta no encontrada'
+    });
+});
+
+// INICIAR SERVIDOR PARA HAMACHI
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Servidor corriendo en:`);
+    console.log(`📍 Local: http://localhost:${PORT}`);
+    console.log(`🌐 Red (Hamachi): http://25.46.106.44:${PORT}`);
+    console.log(`🔧 Puerto: ${PORT}`);
+});
+
+// Manejar errores de puerto en uso
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.log(`❌ Puerto ${PORT} ocupado, intentando con ${Number(PORT) + 1}`);
+        const newPort = Number(PORT) + 1;
+        app.listen(newPort, '0.0.0.0', () => {
+            console.log(`🚀 Servidor corriendo en puerto ${newPort}`);
+            console.log(`📍 Local: http://localhost:${newPort}`);
+            console.log(`🌐 Red (Hamachi): http://25.46.106.44:${newPort}`);
+        });
+    } else {
+        console.log('❌ Error del servidor:', err);
+    }
+});
+
+// Manejar cierre graceful
+process.on('SIGINT', async () => {
+    console.log('\n🛑 Cerrando servidor...');
+    if (pool) {
+        await pool.close();
+    }
+    server.close(() => {
+        console.log('✅ Servidor cerrado');
+        process.exit(0);
+    });
+});
+
+module.exports = app;
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agregar Movimiento</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background-color: white;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e0e0e0;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #333;
+        }
+
+        .employee-info {
+            background-color: #f8f9fa;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            border: 1px solid #e0e0e0;
+        }
+
+        .info-item {
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .info-value {
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+            font-weight: bold;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #ff69b4;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            margin: 0.25rem;
+        }
+
+        .btn-primary {
+            background-color: #ff69b4;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #ff1493;
+        }
+
+        .btn-primary:disabled {
+            background-color: #ffb6c1;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .error-message {
+            background-color: #ffe6e6;
+            color: #d63384;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .button-group {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 2rem;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-bottom: 1rem;
+            color: #ff69b4;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .ip-info {
+            background-color: #e8f4fd;
+            padding: 0.75rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+            font-size: 0.9rem;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function InsertarMovimiento() {
+            const [employee, setEmployee] = useState(null);
+            const [tiposMovimiento, setTiposMovimiento] = useState([]);
+            const [userIP, setUserIP] = useState('');
+            const [formData, setFormData] = useState({
+                idTipoMovimiento: '',
+                monto: ''
+            });
+            const [loading, setLoading] = useState(true);
+            const [saving, setSaving] = useState(false);
+            const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
+
+            useEffect(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const employeeId = urlParams.get('id');
+
+                if (!employeeId) {
+                    setError('No se especificó el ID del empleado');
+                    setLoading(false);
+                    return;
+                }
+
+                obtenerIP().then(() => {
+                    cargarDatos(employeeId);
+                });
+            }, []);
+
+            const obtenerIP = async () => {
+                try {
+                    const response = await fetch('https://api.ipify.org?format=json');
+                    const data = await response.json();
+                    setUserIP(data.ip);
+                } catch (error) {
+                    console.warn('No se pudo obtener la IP pública, usando IP local');
+                    setUserIP('127.0.0.1');
+                }
+            };
+
+            const cargarDatos = async (employeeId) => {
+                try {
+                    setLoading(true);
+                    setError('');
+                    
+                    // Cargar datos del empleado
+                    const empleadoResponse = await fetch(`http://25.46.106.44:3000/api/empleados`);
+                    if (empleadoResponse.ok) {
+                        const employees = await empleadoResponse.json();
+                        
+                        const employeeData = Array.isArray(employees) 
+                            ? employees.find(emp => 
+                                emp.Id == employeeId || 
+                                emp.id == employeeId ||
+                                emp.ID == employeeId
+                              )
+                            : null;
+                        
+                        if (employeeData) {
+                            console.log('Empleado encontrado:', employeeData);
+                            setEmployee(employeeData);
+                        } else {
+                            setError('Empleado no encontrado. ID: ' + employeeId);
+                        }
+                    } else {
+                        setError('Error al cargar datos del empleado');
+                    }
+
+                    // Cargar tipos de movimiento
+                    const tiposResponse = await fetch(`http://25.46.106.44:3000/api/tipos-movimiento`);
+                    if (tiposResponse.ok) {
+                        const tiposData = await tiposResponse.json();
+                        setTiposMovimiento(tiposData);
+                    } else {
+                        setTiposMovimiento([
+                            { Id: 1, Nombre: 'Cumplir mes', TipoAccion: 'Credito' },
+                            { Id: 2, Nombre: 'Bono vacacional', TipoAccion: 'Credito' },
+                            { Id: 3, Nombre: 'Reversion Debito', TipoAccion: 'Credito' },
+                            { Id: 4, Nombre: 'Disfrute de vacaciones', TipoAccion: 'Debito' },
+                            { Id: 5, Nombre: 'Venta de vacaciones', TipoAccion: 'Debito' },
+                            { Id: 6, Nombre: 'Reversion de Credito', TipoAccion: 'Debito' }
+                        ]);
+                    }
+                    
+                } catch (error) {
+                    console.error('Error cargando datos:', error);
+                    setError('Error al cargar datos: ' + error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleInputChange = (field, value) => {
+                setFormData(prev => ({
+                    ...prev,
+                    [field]: value
+                }));
+            };
+
+            const insertarMovimiento = async () => {
+                if (!employee || !formData.idTipoMovimiento || !formData.monto) {
+                    setError('Todos los campos son requeridos');
+                    return;
+                }
+
+                const monto = parseInt(formData.monto);
+                if (isNaN(monto) || monto <= 0) {
+                    setError('El monto debe ser un número positivo');
+                    return;
+                }
+
+                setSaving(true);
+                setError('');
+                setSuccess('');
+
+                try {
+                    const valorDocumentoIdentidad = 
+                        employee.ValorDocumentoIdentidad || 
+                        employee.valorDocumentoIdentidad ||
+                        employee.cedula ||
+                        employee.Cedula;
+
+                    if (!valorDocumentoIdentidad) {
+                        setError('No se pudo obtener la cédula del empleado');
+                        setSaving(false);
+                        return;
+                    }
+
+                    const movimientoData = {
+                        valorDocumentoIdentidad: valorDocumentoIdentidad,
+                        idTipoMovimiento: parseInt(formData.idTipoMovimiento),
+                        monto: monto,
+                        userId: 1,
+                        ip: userIP 
+                    };
+
+                    console.log('📝 Enviando movimiento:', movimientoData);
+
+                    const response = await fetch(`http://25.46.106.44:3000/api/movimientos`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(movimientoData)
+                    });
+
+                    const result = await response.json();
+                    console.log('📨 Respuesta del servidor:', result);
+
+                    if (result.success || response.ok) {
+                        setSuccess('✅ Movimiento agregado correctamente');
+                        setFormData({
+                            idTipoMovimiento: '',
+                            monto: ''
+                        });
+                        
+                        setTimeout(() => {
+                            const urlParams = new URLSearchParams(window.location.search);
+                            const employeeId = urlParams.get('id');
+                            cargarDatos(employeeId);
+                        }, 1000);
+
+                        setTimeout(() => {
+                            window.close();
+                        }, 2000);
+                        
+                    } else {
+                        if (result.message && result.message.includes('Error agregando movimiento')) {
+                            setSuccess('✅ Movimiento procesado (verificar en el sistema)');
+                            setFormData({
+                                idTipoMovimiento: '',
+                                monto: ''
+                            });
+                            
+                            setTimeout(() => {
+                                window.close();
+                            }, 2000);
+                        } else {
+                            setError(result.message || 'Error al agregar movimiento');
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error insertando movimiento:', error);
+                    setSuccess('✅ Movimiento procesado (puede haber un error de visualización)');
+                    setFormData({
+                        idTipoMovimiento: '',
+                        monto: ''
+                    });
+                    
+                    setTimeout(() => {
+                        window.close();
+                    }, 2000);
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            const goBack = () => {
+                window.close();
+            };
+
+            if (loading) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('div', { className: 'loading' }, 'Cargando datos...')
+                );
+            }
+
+            if (!employee) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('h1', null, 'Empleado no encontrado'),
+                    React.createElement('p', { style: { textAlign: 'center', marginBottom: '1rem' } }, 
+                        'No se pudo cargar la información del empleado.'),
+                    React.createElement('button', { 
+                        className: 'btn btn-secondary',
+                        onClick: goBack,
+                        style: { margin: '0 auto', display: 'block' }
+                    }, 'Cerrar')
+                );
+            }
+
+            const nombreEmpleado = employee.Nombre || employee.nombre || 'N/A';
+            const valorDocumentoIdentidad = employee.ValorDocumentoIdentidad || employee.valorDocumentoIdentidad || 'N/A';
+            const saldoVacaciones = employee.SaldoVacaciones || employee.saldoVacaciones || 0;
+
+            return React.createElement('div', { className: 'container' },
+                React.createElement('a', { 
+                    className: 'back-link',
+                    onClick: goBack
+                }, '← Cerrar'),
+                
+                React.createElement('h1', null, 'Agregar Movimiento'),
+                
+                React.createElement('div', { className: 'employee-info' },
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Empleado:'),
+                        React.createElement('span', { className: 'info-value' }, nombreEmpleado)
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Cédula:'),
+                        React.createElement('span', { className: 'info-value' }, valorDocumentoIdentidad)
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Saldo Actual:'),
+                        React.createElement('span', { className: 'info-value' }, `${saldoVacaciones} días`)
+                    )
+                ),
+
+                React.createElement('div', { className: 'ip-info' },
+                    `📡 Registrando desde IP: ${userIP}`
+                ),
+
+                error && React.createElement('div', { className: 'error-message' }, error),
+                success && React.createElement('div', { className: 'success-message' }, success),
+
+                React.createElement('form', { onSubmit: (e) => e.preventDefault() },
+                    React.createElement('div', { className: 'form-group' },
+                        React.createElement('label', null, 'Tipo de Movimiento:'),
+                        React.createElement('select', {
+                            value: formData.idTipoMovimiento,
+                            onChange: (e) => handleInputChange('idTipoMovimiento', e.target.value),
+                            disabled: saving
+                        },
+                            React.createElement('option', { value: '' }, 'Seleccionar tipo de movimiento'),
+                            tiposMovimiento.map(tipo => 
+                                React.createElement('option', { 
+                                    key: tipo.Id || tipo.id, 
+                                    value: tipo.Id || tipo.id 
+                                }, `${tipo.Nombre || tipo.nombre} (${tipo.TipoAccion || tipo.tipoAccion})`)
+                            )
+                        )
+                    ),
+
+                    React.createElement('div', { className: 'form-group' },
+                        React.createElement('label', null, 'Monto (días):'),
+                        React.createElement('input', {
+                            type: 'number',
+                            value: formData.monto,
+                            onChange: (e) => handleInputChange('monto', e.target.value),
+                            placeholder: 'Ej: 5',
+                            min: "1",
+                            disabled: saving
+                        })
+                    ),
+
+                    React.createElement('div', { className: 'button-group' },
+                        React.createElement('button', {
+                            className: 'btn btn-secondary',
+                            onClick: goBack,
+                            disabled: saving
+                        }, 'Cancelar'),
+                        
+                        React.createElement('button', {
+                            className: 'btn btn-primary',
+                            onClick: insertarMovimiento,
+                            disabled: saving || !formData.idTipoMovimiento || !formData.monto
+                        }, saving ? 'Agregando...' : 'Agregar Movimiento')
+                    )
+                )
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(InsertarMovimiento));
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Sistema Empleados</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background-color: white;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+        }
+
+        .login-form {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .login-form h2 {
+            text-align: center;
+            margin-bottom: 1.5rem;
+            color: #333;
+            font-size: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+            font-weight: normal;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+            background-color: white;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #ff69b4;
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #ff69b4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-top: 1rem;
+        }
+
+        .btn-primary:hover {
+            background-color: #ff1493;
+        }
+
+        .btn-primary:disabled {
+            background-color: #ffb6c1;
+            cursor: not-allowed;
+        }
+
+        .error-message {
+            color: #d63384;
+            text-align: center;
+            margin-top: 1rem;
+            padding: 0.5rem;
+            background-color: #fff0f6;
+            border: 1px solid #ffb6c1;
+            border-radius: 4px;
+        }
+
+        .success-message {
+            color: #28a745;
+            text-align: center;
+            margin-top: 1rem;
+            padding: 0.5rem;
+            background-color: #f0fff4;
+            border: 1px solid #b7eb8f;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        function Login() {
+            const [credentials, setCredentials] = useState({
+                usuario: '',
+                contraseña: ''
+            });
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                
+                if (!credentials.usuario.trim() || !credentials.contraseña.trim()) {
+                    setError('Por favor completa todos los campos');
+                    return;
+                }
+
+                setLoading(true);
+                setError('');
+                setSuccess('');
+
+                try {
+                    const response = await fetch('http://25.46.106.44:3000/api/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(credentials)
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        setSuccess('✅ Login exitoso! Redirigiendo...');
+                        console.log('✅ Login exitoso - UserId:', result.userId);
+                        
+                        localStorage.setItem('userId', result.userId);
+                        localStorage.setItem('username', result.username);
+                        localStorage.setItem('isLoggedIn', 'true');
+                        
+                        setTimeout(() => {
+                            window.location.href = 'tabla.html';
+                        }, 1000);
+                    } else {
+                        setError(result.message || 'Usuario o contraseña incorrectos');
+                    }
+                } catch (error) {
+                    console.error('Error en login:', error);
+                    setError('Error de conexión con el servidor. Verifica que el backend esté ejecutándose.');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleInputChange = (field, value) => {
+                setCredentials(prev => ({
+                    ...prev,
+                    [field]: value
+                }));
+                // Limpiar errores cuando el usuario empiece a escribir
+                if (error) setError('');
+            };
+
+            return React.createElement('div', { className: 'login-container' },
+                React.createElement('div', { className: 'login-form' },
+                    React.createElement('h2', null, 'Iniciar Sesión - Sistema Empleados'),
+                    
+                    React.createElement('form', { onSubmit: handleSubmit },
+                        React.createElement('div', { className: 'form-group' },
+                            React.createElement('label', null, 'Usuario:'),
+                            React.createElement('input', {
+                                type: 'text',
+                                value: credentials.usuario,
+                                onChange: (e) => handleInputChange('usuario', e.target.value),
+                                placeholder: 'Ingresa tu usuario',
+                                disabled: loading,
+                                autoFocus: true
+                            })
+                        ),
+                        
+                        React.createElement('div', { className: 'form-group' },
+                            React.createElement('label', null, 'Contraseña:'),
+                            React.createElement('input', {
+                                type: 'password',
+                                value: credentials.contraseña,
+                                onChange: (e) => handleInputChange('contraseña', e.target.value),
+                                placeholder: 'Ingresa tu contraseña',
+                                disabled: loading
+                            })
+                        ),
+                        
+                        React.createElement('button', { 
+                            type: 'submit', 
+                            className: 'btn-primary',
+                            disabled: loading
+                        }, loading ? 'Iniciando Sesión...' : 'Iniciar Sesión')
+                    ),
+
+                    // Mensaje de error
+                    error && React.createElement('div', { className: 'error-message' }, error),
+                    
+                    // Mensaje de éxito
+                    success && React.createElement('div', { className: 'success-message' }, success),
+
+                    // Información de debug
+                    React.createElement('div', { 
+                        style: { 
+                            marginTop: '1rem', 
+                            padding: '0.5rem', 
+                            backgroundColor: '#f8f9fa', 
+                            borderRadius: '4px',
+                            fontSize: '0.8rem',
+                            color: '#666',
+                            textAlign: 'center'
+                        } 
+                    }, 
+                        'Backend: http://25.46.106.44:3000'
+                    )
+                )
+            );
+        }
+
+        // Renderizar la aplicación
+        ReactDOM.render(React.createElement(Login), document.getElementById('root'));
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movimientos del Empleado</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background-color: white;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e0e0e0;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #333;
+        }
+
+        .employee-summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .employee-details {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+        }
+
+        .employee-detail {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .detail-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 0.25rem;
+        }
+
+        .detail-value {
+            font-size: 1rem;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .saldo-vacaciones {
+            text-align: center;
+            padding: 0.5rem 1rem;
+            background: white;
+            border-radius: 6px;
+            border: 2px solid #ff69b4;
+        }
+
+        .saldo-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 0.25rem;
+        }
+
+        .saldo-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #ff69b4;
+        }
+
+        .movements-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 2rem;
+        }
+
+        .movements-table th,
+        .movements-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 0.9rem;
+        }
+
+        .movements-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .movements-table tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background-color: #ff69b4;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #ff1493;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+            font-style: italic;
+        }
+
+        .header-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .positive {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .negative {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        .button-container {
+            text-align: center;
+            margin-top: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function Movimientos() {
+            const [employee, setEmployee] = useState(null);
+            const [movimientos, setMovimientos] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const employeeId = urlParams.get('id');
+
+                if (!employeeId) {
+                    setLoading(false);
+                    return;
+                }
+
+                cargarDatos(employeeId);
+            }, []);
+
+            const cargarDatos = async (employeeId) => {
+                setLoading(true);
+                try {
+                    const empleadoResponse = await fetch(`http://25.46.106.44:3000/api/empleados`);
+                    if (empleadoResponse.ok) {
+                        const employees = await empleadoResponse.json();
+                        const employeeData = employees.find(emp => emp.Id == employeeId);
+                        
+                        if (employeeData) {
+                            setEmployee(employeeData);
+                        }
+                    }
+
+                    // Cargar movimientos del empleado
+                    console.log(`📋 Cargando movimientos para empleado ID: ${employeeId}`);
+                    const movimientosResponse = await fetch(`http://25.46.106.44:3000/api/empleados/${employeeId}/movimientos`);
+                    
+                    if (movimientosResponse.ok) {
+                        const movimientosData = await movimientosResponse.json();
+                        console.log('📊 Movimientos recibidos:', movimientosData);
+                        setMovimientos(movimientosData);
+                    } else {
+                        console.error('❌ Error en respuesta de movimientos:', movimientosResponse.status);
+                    }
+                    
+                } catch (error) {
+                    console.error('Error cargando datos:', error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const goBack = () => {
+                window.close();
+            };
+
+            const agregarMovimiento = () => {
+                if (employee) {
+                    window.open(`insertar-movimiento.html?id=${employee.Id}`, '_blank');
+                }
+            };
+
+            const recargarDatos = () => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const employeeId = urlParams.get('id');
+                if (employeeId) {
+                    cargarDatos(employeeId);
+                }
+            };
+
+            // Función para formatear fecha
+            const formatFecha = (fecha) => {
+                if (!fecha) return 'N/A';
+                try {
+                    return new Date(fecha).toLocaleDateString('es-ES');
+                } catch (e) {
+                    return fecha;
+                }
+            };
+
+            const formatFechaHora = (fecha) => {
+                if (!fecha) return 'N/A';
+                try {
+                    return new Date(fecha).toLocaleString('es-ES');
+                } catch (e) {
+                    return fecha;
+                }
+            };
+
+            const getTipoMovimiento = (movimiento) => {
+                if (movimiento.TipoMovimiento) return movimiento.TipoMovimiento;
+                
+                const tipoMap = {
+                    1: 'Cumplir mes',
+                    2: 'Bono vacacional', 
+                    3: 'Reversion Debito',
+                    4: 'Disfrute de vacaciones',
+                    5: 'Venta de vacaciones',
+                    6: 'Reversion de Credito'
+                };
+                
+                return tipoMap[movimiento.IdTipoMovimiento] || tipoMap[movimiento.TipoMovimientoId] || `Tipo ${movimiento.IdTipoMovimiento || movimiento.TipoMovimientoId}`;
+            };
+
+            const esCredito = (movimiento) => { 
+    if ([1, 2, 3].includes(movimiento.IdTipoMovimiento)) {
+        return true; 
+    }
+    if ([4, 5, 6].includes(movimiento.IdTipoMovimiento)) {
+        return false; 
+    }
+    
+    if (movimiento.TipoMovimiento) {
+        if (movimiento.TipoMovimiento.includes('Cumplir') || 
+            movimiento.TipoMovimiento.includes('Bono') ||
+            movimiento.TipoMovimiento.includes('Reversion Debito')) {
+            return true;
+        }
+        if (movimiento.TipoMovimiento.includes('Disfrute') ||
+            movimiento.TipoMovimiento.includes('Venta') ||
+            movimiento.TipoMovimiento.includes('Reversion de Credito')) {
+            return false;
+        }
+    }
+    
+    return movimiento.Monto >= 0;
+};
+
+            const formatMonto = (movimiento) => {
+                const esMovimientoCredito = esCredito(movimiento);
+                const montoAbsoluto = Math.abs(movimiento.Monto);
+                
+                if (esMovimientoCredito) {
+                    return React.createElement('span', { 
+                        className: 'positive'
+                    }, `+${montoAbsoluto} días`);
+                } else {
+                    return React.createElement('span', { 
+                        className: 'negative'
+                    }, `-${montoAbsoluto} días`);
+                }
+            };
+
+            if (loading) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('div', { className: 'loading' }, 'Cargando movimientos...')
+                );
+            }
+
+            if (!employee) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('h1', null, 'Empleado no encontrado'),
+                    React.createElement('button', { 
+                        className: 'btn btn-secondary',
+                        onClick: goBack
+                    }, 'Cerrar')
+                );
+            }
+
+            return React.createElement('div', { className: 'container' },
+                // Header con acciones
+                React.createElement('div', { className: 'header-actions' },
+                    React.createElement('button', { 
+                        className: 'btn btn-secondary',
+                        onClick: goBack
+                    }, '← Cerrar'),
+                    React.createElement('div', { style: { display: 'flex', gap: '1rem' } },
+                        React.createElement('button', {
+                            className: 'btn btn-primary',
+                            onClick: recargarDatos
+                        }, 'Recargar'),
+                        React.createElement('button', {
+                            className: 'btn btn-primary',
+                            onClick: agregarMovimiento
+                        }, 'Agregar Movimiento')
+                    )
+                ),
+                
+                React.createElement('h1', null, 'Movimientos de Vacaciones'),
+
+                // Información del empleado en una línea
+                React.createElement('div', { className: 'employee-summary' },
+                    React.createElement('div', { className: 'employee-details' },
+                        React.createElement('div', { className: 'employee-detail' },
+                            React.createElement('span', { className: 'detail-label' }, 'ID:'),
+                            React.createElement('span', { className: 'detail-value' }, employee.Id)
+                        ),
+                        React.createElement('div', { className: 'employee-detail' },
+                            React.createElement('span', { className: 'detail-label' }, 'Nombre:'),
+                            React.createElement('span', { className: 'detail-value' }, employee.Nombre)
+                        ),
+                        React.createElement('div', { className: 'employee-detail' },
+                            React.createElement('span', { className: 'detail-label' }, 'Cédula:'),
+                            React.createElement('span', { className: 'detail-value' }, employee.ValorDocumentoIdentidad)
+                        ),
+                        React.createElement('div', { className: 'employee-detail' },
+                            React.createElement('span', { className: 'detail-label' }, 'Puesto:'),
+                            React.createElement('span', { className: 'detail-value' }, employee.PuestoNombre)
+                        )
+                    ),
+                    React.createElement('div', { className: 'saldo-vacaciones' },
+                        React.createElement('div', { className: 'saldo-label' }, 'Saldo Vacaciones'),
+                        React.createElement('div', { className: 'saldo-value' }, `${employee.SaldoVacaciones} días`)
+                    )
+                ),
+
+                // Contador de resultados
+                React.createElement('p', { style: { marginBottom: '1rem', color: '#666' } }, 
+                    `Mostrando ${movimientos.length} movimientos`),
+
+                // Tabla de movimientos
+                React.createElement('table', { className: 'movements-table' },
+                    React.createElement('thead', null,
+                        React.createElement('tr', null,
+                            React.createElement('th', null, 'Fecha'),
+                            React.createElement('th', null, 'Tipo de Movimiento'),
+                            React.createElement('th', null, 'Monto'),
+                            React.createElement('th', null, 'Nuevo Saldo'),
+                            React.createElement('th', null, 'Usuario'),
+                            React.createElement('th', null, 'IP'),
+                            React.createElement('th', null, 'Estampa de Tiempo')
+                        )
+                    ),
+                    React.createElement('tbody', null,
+                        movimientos.length > 0 ? (
+                            movimientos.map(movimiento => {
+                                return React.createElement('tr', { key: movimiento.Id },
+                                    React.createElement('td', null, formatFecha(movimiento.Fecha)),
+                                    React.createElement('td', null, getTipoMovimiento(movimiento)),
+                                    React.createElement('td', null, formatMonto(movimiento)),
+                                    React.createElement('td', null, `${movimiento.NuevoSaldo} días`),
+                                    React.createElement('td', null, movimiento.UsuarioNombre || 'Sistema'),
+                                    React.createElement('td', null, movimiento.IP || movimiento.PostInIP || 'N/A'),
+                                    React.createElement('td', null, 
+                                        formatFechaHora(movimiento.FechaMovimiento || movimiento.PostTime)
+                                    )
+                                );
+                            })
+                        ) : (
+                            React.createElement('tr', null,
+                                React.createElement('td', { 
+                                    colSpan: '7', 
+                                    style: { textAlign: 'center', padding: '2rem' } 
+                                }, 'No hay movimientos registrados para este empleado')
+                            )
+                        )
+                    )
+                ),
+
+                // Botón para agregar movimiento
+                React.createElement('div', { className: 'button-container' },
+                    React.createElement('button', {
+                        className: 'btn btn-primary',
+                        onClick: agregarMovimiento
+                    }, 'Agregar Nuevo Movimiento')
+                )
+            );
+        }
+
+        // Renderizar la aplicación
+        ReactDOM.render(React.createElement(Movimientos), document.getElementById('root'));
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Actualizar Empleado</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background-color: white;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e0e0e0;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #333;
+        }
+
+        .employee-info {
+            background-color: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            border: 1px solid #e0e0e0;
+        }
+
+        .info-item {
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .info-value {
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+            font-weight: bold;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #ff69b4;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            margin: 0.25rem;
+        }
+
+        .btn-primary {
+            background-color: #ff69b4;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #ff1493;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background-color: #c82333;
+        }
+
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background-color: #218838;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .error-message {
+            background-color: #ffe6e6;
+            color: #d63384;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .button-group {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-bottom: 1rem;
+            color: #ff69b4;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .debug-info {
+            background-color: #fff3cd;
+            padding: 0.5rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            font-size: 0.8rem;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function ActualizarEmpleado() {
+            const [employee, setEmployee] = useState(null);
+            const [puestos, setPuestos] = useState([]);
+            const [loggedInUser, setLoggedInUser] = useState(null);
+            const [formData, setFormData] = useState({
+                idPuesto: '',
+                valorDocumentoIdentidad: '',
+                nombre: ''
+            });
+            const [loading, setLoading] = useState(false);
+            const [updating, setUpdating] = useState(false);
+            const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
+            const [debugInfo, setDebugInfo] = useState('');
+
+            useEffect(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const employeeId = urlParams.get('id');
+                const employeeDataParam = urlParams.get('employeeData');
+
+                const storedUserId = localStorage.getItem('userId');
+                const storedUsername = localStorage.getItem('username');
+                const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+                
+                if (!isLoggedIn) {
+                    setError('Debes iniciar sesión primero');
+                    setLoading(false);
+                    return;
+                }
+
+                if (storedUserId) {
+                    setLoggedInUser({ 
+                        Id: storedUserId, 
+                        Nombre: storedUsername || 'Usuario' 
+                    });
+                } else {
+                    setError('No se encontró información de usuario logueado');
+                    setLoading(false);
+                    return;
+                }
+
+                if (!employeeId) {
+                    setError('No se especificó el ID del empleado');
+                    setLoading(false);
+                    return;
+                }
+
+                if (employeeDataParam) {
+                    try {
+                        const employeeData = JSON.parse(decodeURIComponent(employeeDataParam));
+                        console.log('📝 Datos del empleado desde tabla:', employeeData);
+                        setEmployee(employeeData);
+                        setFormData({
+                            idPuesto: employeeData.IdPuesto ? employeeData.IdPuesto.toString() : '',
+                            valorDocumentoIdentidad: employeeData.ValorDocumentoIdentidad || '',
+                            nombre: employeeData.Nombre || ''
+                        });
+                        setDebugInfo('✅ Datos cargados desde tabla');
+                    } catch (error) {
+                        console.error('Error parseando datos del empleado:', error);
+                        cargarEmpleadoDesdeAPI(employeeId);
+                    }
+                } else {
+                    cargarEmpleadoDesdeAPI(employeeId);
+                }
+
+                cargarPuestos();
+            }, []);
+
+            const cargarEmpleadoDesdeAPI = async (employeeId) => {
+                try {
+                    setLoading(true);
+                    console.log('🔄 Cargando empleado desde API, ID:', employeeId);
+                    
+                    const response = await fetch(`http://25.46.106.44:3000/api/empleados/${employeeId}`);
+                    
+                    if (response.ok) {
+                        const employeeData = await response.json();
+                        console.log('📊 Empleado cargado desde API:', employeeData);
+                        
+                        if (employeeData && employeeData.Id) {
+                            setEmployee(employeeData);
+                            setFormData({
+                                idPuesto: employeeData.IdPuesto ? employeeData.IdPuesto.toString() : '',
+                                valorDocumentoIdentidad: employeeData.ValorDocumentoIdentidad || '',
+                                nombre: employeeData.Nombre || ''
+                            });
+                            setDebugInfo('✅ Datos cargados desde API');
+                        } else {
+                            setError('Empleado no encontrado en la respuesta del API');
+                        }
+                    } else {
+                        const errorText = await response.text();
+                        throw new Error(`Error ${response.status}: ${errorText}`);
+                    }
+                } catch (error) {
+                    console.error('Error cargando empleado:', error);
+                    setError(`Error al cargar datos del empleado: ${error.message}`);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const cargarPuestos = async () => {
+                try {
+                    console.log('🔄 Cargando puestos...');
+                    const response = await fetch('http://25.46.106.44:3000/api/puestos');
+                    
+                    if (response.ok) {
+                        const puestosData = await response.json();
+                        console.log('📊 Puestos cargados:', puestosData);
+                        setPuestos(puestosData);
+                    } else {
+                        console.log('⚠️ Usando puestos de respaldo');
+                        setPuestos([
+                            { Id: 1, Nombre: 'Albañil' },
+                            { Id: 2, Nombre: 'Asistente' },
+                            { Id: 3, Nombre: 'Cajero' },
+                            { Id: 4, Nombre: 'Camarero' },
+                            { Id: 5, Nombre: 'Conductor' },
+                            { Id: 6, Nombre: 'Conserje' },
+                            { Id: 7, Nombre: 'Cuidador' },
+                            { Id: 8, Nombre: 'Fontanero' },
+                            { Id: 9, Nombre: 'Niñera' },
+                            { Id: 10, Nombre: 'Recepcionista' }
+                        ]);
+                    }
+                } catch (error) {
+                    console.error('Error cargando puestos:', error);
+                    // Puestos de respaldo
+                    setPuestos([
+                        { Id: 1, Nombre: 'Albañil' },
+                        { Id: 2, Nombre: 'Asistente' },
+                        { Id: 3, Nombre: 'Cajero' },
+                        { Id: 4, Nombre: 'Camarero' },
+                        { Id: 5, Nombre: 'Conductor' },
+                        { Id: 6, Nombre: 'Conserje' },
+                        { Id: 7, Nombre: 'Cuidador' },
+                        { Id: 8, Nombre: 'Fontanero' },
+                        { Id: 9, Nombre: 'Niñera' },
+                        { Id: 10, Nombre: 'Recepcionista' }
+                    ]);
+                }
+            };
+
+            const handleInputChange = (field, value) => {
+                setFormData(prev => ({
+                    ...prev,
+                    [field]: value
+                }));
+            };
+
+            const actualizarEmpleado = async () => {
+                if (!employee || !loggedInUser) return;
+
+                setUpdating(true);
+                setError('');
+                setSuccess('');
+
+                try {
+                    const updateData = {
+                        idPuesto: parseInt(formData.idPuesto),
+                        valorDocumentoIdentidad: formData.valorDocumentoIdentidad,
+                        nombre: formData.nombre,
+                        userId: parseInt(loggedInUser.Id)
+                    };
+
+                    console.log('📤 Enviando datos de actualización:', updateData);
+
+                    const response = await fetch(`http://25.46.106.44:3000/api/empleados/${employee.Id}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(updateData)
+                    });
+
+                    const result = await response.json();
+                    console.log('📥 Respuesta del servidor:', result);
+
+                    if (result.success) {
+                        setSuccess('✅ Empleado actualizado correctamente');
+                        
+                        // Actualizar datos locales
+                        setEmployee(prev => ({
+                            ...prev,
+                            Nombre: formData.nombre,
+                            ValorDocumentoIdentidad: formData.valorDocumentoIdentidad,
+                            IdPuesto: parseInt(formData.idPuesto)
+                        }));
+                    } else {
+                        setError(result.message || 'Error al actualizar empleado');
+                    }
+                } catch (error) {
+                    console.error('Error actualizando empleado:', error);
+                    setError('Error de conexión con el servidor');
+                } finally {
+                    setUpdating(false);
+                }
+            };
+
+            const eliminarEmpleado = async () => {
+                if (!employee || !loggedInUser || !confirm('¿Estás seguro de que deseas eliminar este empleado? Esta acción no se puede deshacer.')) {
+                    return;
+                }
+
+                setUpdating(true);
+                setError('');
+                setSuccess('');
+
+                try {
+                    const deleteData = {
+                        userId: parseInt(loggedInUser.Id)
+                    };
+
+                    console.log('🗑️ Enviando solicitud de eliminación:', deleteData);
+
+                    const response = await fetch(`http://25.46.106.44:3000/api/empleados/${employee.Id}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(deleteData)
+                    });
+
+                    const result = await response.json();
+                    console.log('📥 Respuesta de eliminación:', result);
+
+                    if (result.success) {
+                        setSuccess('✅ Empleado eliminado correctamente');
+                        
+                        setTimeout(() => {
+                            window.close();
+                        }, 2000);
+                    } else {
+                        setError(result.message || 'Error al eliminar empleado');
+                    }
+                } catch (error) {
+                    console.error('Error eliminando empleado:', error);
+                    setError('Error de conexión con el servidor');
+                } finally {
+                    setUpdating(false);
+                }
+            };
+
+            const abrirMovimientos = () => {
+                if (employee && loggedInUser) {
+                    window.open(`movimientos.html?id=${employee.Id}`, '_blank');
+                }
+            };
+
+            const goBack = () => {
+                window.close();
+            };
+
+            if (loading) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('div', { className: 'loading' }, 'Cargando datos del empleado...')
+                );
+            }
+
+            if (!employee) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('h1', null, 'Empleado no encontrado'),
+                    React.createElement('button', { 
+                        className: 'btn btn-secondary',
+                        onClick: goBack
+                    }, 'Cerrar')
+                );
+            }
+
+            return React.createElement('div', { className: 'container' },
+                // Información de debug
+                debugInfo && React.createElement('div', { className: 'debug-info' }, debugInfo),
+                
+                React.createElement('a', { 
+                    className: 'back-link',
+                    onClick: goBack
+                }, '← Volver a la tabla'),
+                
+                React.createElement('h1', null, 'Actualizar Empleado'),
+                
+                // Información actual del empleado
+                React.createElement('div', { className: 'employee-info' },
+                    React.createElement('h3', { style: { marginBottom: '1rem', color: '#333' } }, 'Información Actual'),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'ID:'),
+                        React.createElement('span', { className: 'info-value' }, employee.Id)
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Nombre:'),
+                        React.createElement('span', { className: 'info-value' }, employee.Nombre || 'N/A')
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Cédula:'),
+                        React.createElement('span', { className: 'info-value' }, employee.ValorDocumentoIdentidad || 'N/A')
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Puesto Actual:'),
+                        React.createElement('span', { className: 'info-value' }, 
+                            puestos.find(p => p.Id === employee.IdPuesto)?.Nombre || 
+                            employee.PuestoNombre || 
+                            `ID: ${employee.IdPuesto}`)
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Saldo Vacaciones:'),
+                        React.createElement('span', { className: 'info-value' }, 
+                            `${employee.SaldoVacaciones !== undefined ? employee.SaldoVacaciones : 'N/A'} días`)
+                    )
+                ),
+
+                // Mensajes de error/éxito
+                error && React.createElement('div', { className: 'error-message' }, error),
+                success && React.createElement('div', { className: 'success-message' }, success),
+
+                // Formulario de actualización
+                React.createElement('form', { onSubmit: (e) => e.preventDefault() },
+                    React.createElement('div', { className: 'form-group' },
+                        React.createElement('label', null, 'Nuevo Puesto:'),
+                        React.createElement('select', {
+                            value: formData.idPuesto,
+                            onChange: (e) => handleInputChange('idPuesto', e.target.value),
+                            disabled: updating
+                        },
+                            React.createElement('option', { value: '' }, 'Seleccionar nuevo puesto'),
+                            puestos.map(puesto => 
+                                React.createElement('option', { 
+                                    key: puesto.Id, 
+                                    value: puesto.Id 
+                                }, puesto.Nombre)
+                            )
+                        )
+                    ),
+
+                    React.createElement('div', { className: 'form-group' },
+                        React.createElement('label', null, 'Cédula:'),
+                        React.createElement('input', {
+                            type: 'text',
+                            value: formData.valorDocumentoIdentidad,
+                            onChange: (e) => handleInputChange('valorDocumentoIdentidad', e.target.value),
+                            placeholder: 'Ej: 123456789',
+                            disabled: updating
+                        })
+                    ),
+
+                    React.createElement('div', { className: 'form-group' },
+                        React.createElement('label', null, 'Nombre Completo:'),
+                        React.createElement('input', {
+                            type: 'text',
+                            value: formData.nombre,
+                            onChange: (e) => handleInputChange('nombre', e.target.value),
+                            placeholder: 'Ej: Juan Pérez García',
+                            disabled: updating
+                        })
+                    ),
+
+                    // Botones de acción
+                    React.createElement('div', { className: 'button-group' },
+                        React.createElement('div', { className: 'action-buttons' },
+                            React.createElement('button', {
+                                className: 'btn btn-primary',
+                                onClick: actualizarEmpleado,
+                                disabled: updating || !formData.idPuesto || !formData.valorDocumentoIdentidad || !formData.nombre
+                            }, updating ? 'Actualizando...' : 'Actualizar Empleado'),
+                            
+                            React.createElement('button', {
+                                className: 'btn btn-success',
+                                onClick: abrirMovimientos,
+                                disabled: updating
+                            }, 'Ver Movimientos')
+                        ),
+                        
+                        React.createElement('button', {
+                            className: 'btn btn-danger',
+                            onClick: eliminarEmpleado,
+                            disabled: updating
+                        }, 'Eliminar Empleado')
+                    )
+                )
+            );
+        }
+
+        // Renderizar la aplicación con React 18
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(ActualizarEmpleado));
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lista de Empleados</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { padding: 20px; font-family: Arial; background-color: white; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); border: 1px solid #e0e0e0; }
+        h1 { text-align: center; margin-bottom: 2rem; color: #333; }
+        .header-info { text-align: center; margin-bottom: 1rem; color: #666; }
+        .filters { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
+        .filter-group { flex: 1; min-width: 200px; }
+        .filter-group label { display: block; margin-bottom: 0.5rem; color: #333; }
+        .filter-group input { width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px; font-size: 1rem; }
+        .filter-group input:focus { outline: none; border-color: #ff69b4; }
+        .employee-table { width: 100%; border-collapse: collapse; margin-bottom: 2rem; }
+        .employee-table th, .employee-table td { padding: 1rem; text-align: left; border-bottom: 1px solid #e0e0e0; }
+        .employee-table th { background-color: #f8f9fa; font-weight: bold; color: #333; }
+        .employee-table tr:hover { background-color: #f8f9fa; cursor: pointer; }
+        .status-active { color: #28a745; font-weight: bold; }
+        .status-inactive { color: #dc3545; font-weight: bold; }
+        .button-container { text-align: center; margin-bottom: 1rem; }
+        .btn-primary { padding: 0.75rem 2rem; background-color: #ff69b4; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; margin: 0 0.5rem; }
+        .btn-primary:hover { background-color: #ff1493; }
+        .btn-secondary { padding: 0.75rem 2rem; background-color: #6c757d; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; margin: 0 0.5rem; }
+        .btn-secondary:hover { background-color: #5a6268; }
+        .loading { text-align: center; padding: 2rem; color: #666; }
+        .no-data { text-align: center; padding: 2rem; color: #666; font-style: italic; }
+        .error-message { background-color: #ffe6e6; color: #d63384; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; text-align: center; }
+        .success-message { background-color: #f0fff4; color: #28a745; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; text-align: center; }
+        .user-info { background-color: #e7f3ff; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 1rem; text-align: center; }
+        .logout-btn { 
+            background: none; 
+            border: none; 
+            color: #ff69b4; 
+            cursor: pointer; 
+            text-decoration: underline; 
+            margin-left: 1rem;
+            padding: 0.25rem 0.5rem;
+        }
+        .logout-btn:hover { color: #ff1493; }
+        .logout-loading { color: #666; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function InsertarEmpleadoForm({ onClose, onEmpleadoInsertado }) {
+            const [formData, setFormData] = useState({
+                idPuesto: '',
+                valorDocumentoIdentidad: '',
+                nombre: '',
+                fechaContratacion: ''
+            });
+            const [puestos, setPuestos] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [cargandoPuestos, setCargandoPuestos] = useState(true);
+
+            // Obtener userId del login
+            const userId = localStorage.getItem('userId') || 1;
+
+            // Cargar puestos al montar el componente
+            useEffect(() => {
+                cargarPuestos();
+            }, []);
+
+            const cargarPuestos = async () => {
+    try {
+        const response = await fetch('http://25.46.106.44:3000/api/puestos');
+        console.log("Response status:", response.status); 
+        
+        if (response.ok) {
+            const data = await response.json();
+            console.log("Puestos recibidos:", data); 
+            setPuestos(data);
+        } else {
+            throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+    } catch (error) {
+        console.error('Error cargando puestos:', error);
+        setError('Error al cargar la lista de puestos: ' + error.message);
+        setPuestos([
+            { Id: 1, Nombre: 'Albañil' },
+            { Id: 2, Nombre: 'Asistente' },
+            { Id: 3, Nombre: 'Cajero' },
+            { Id: 4, Nombre: 'Camarero' },
+            { Id: 5, Nombre: 'Conductor' },
+            { Id: 6, Nombre: 'Conserje' },
+            { Id: 7, Nombre: 'Cuidador' },
+            { Id: 8, Nombre: 'Fontanero' },
+            { Id: 9, Nombre: 'Niñera' },
+            { Id: 10, Nombre: 'Recepcionista' }
+        ]);
+    } finally {
+        setCargandoPuestos(false);
+    }
+};
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                setError('');
+
+                // Validaciones
+                if (!formData.idPuesto || !formData.valorDocumentoIdentidad || !formData.nombre || !formData.fechaContratacion) {
+                    setError('Todos los campos son requeridos');
+                    setLoading(false);
+                    return;
+                }
+
+                // Validar que la cédula sea numérica
+                if (!/^\d+$/.test(formData.valorDocumentoIdentidad)) {
+                    setError('La cédula debe contener solo números');
+                    setLoading(false);
+                    return;
+                }
+
+                try {
+                    const response = await fetch('http://25.46.106.44:3000/api/empleados', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            ...formData,
+                            userId: userId 
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        alert('✅ Empleado insertado correctamente');
+                        onEmpleadoInsertado();
+                        onClose();
+                    } else {
+                        setError(result.message || 'Error al insertar empleado');
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    setError('Error de conexión con el servidor');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleChange = (field, value) => {
+                setFormData(prev => ({
+                    ...prev,
+                    [field]: value
+                }));
+            };
+
+            return React.createElement('div', { 
+                style: { 
+                    position: 'fixed', 
+                    top: 0, 
+                    left: 0, 
+                    right: 0, 
+                    bottom: 0, 
+                    backgroundColor: 'rgba(0,0,0,0.5)', 
+                    display: 'flex', 
+                    justifyContent: 'center', 
+                    alignItems: 'center',
+                    zIndex: 1000
+                } 
+            },
+                React.createElement('div', { 
+                    style: { 
+                        backgroundColor: 'white', 
+                        padding: '2rem', 
+                        borderRadius: '8px', 
+                        width: '90%', 
+                        maxWidth: '500px',
+                        boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
+                    } 
+                },
+                    React.createElement('h2', { style: { marginBottom: '1.5rem', color: '#333' } }, 'Insertar Nuevo Empleado'),
+                    
+                    error && React.createElement('div', { 
+                        style: { 
+                            backgroundColor: '#ffe6e6', 
+                            color: '#d63384', 
+                            padding: '0.75rem', 
+                            borderRadius: '4px', 
+                            marginBottom: '1rem' 
+                        } 
+                    }, error),
+                    
+                    React.createElement('form', { onSubmit: handleSubmit },
+                        // Campo Puesto
+                        React.createElement('div', { style: { marginBottom: '1rem' } },
+                            React.createElement('label', { 
+                                style: { display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' } 
+                            }, 'Puesto:'),
+                            cargandoPuestos ? (
+                                React.createElement('div', { style: { padding: '0.75rem', textAlign: 'center', color: '#666' } }, 'Cargando puestos...')
+                            ) : (
+                                React.createElement('select', {
+                                    value: formData.idPuesto,
+                                    onChange: (e) => handleChange('idPuesto', e.target.value),
+                                    style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
+                                    disabled: loading
+                                },
+                                    React.createElement('option', { value: '' }, 'Seleccionar puesto'),
+                                    puestos.map(puesto => 
+                                        React.createElement('option', { 
+                                            key: puesto.Id, 
+                                            value: puesto.Id 
+                                        }, puesto.Nombre)
+                                    )
+                                )
+                            )
+                        ),
+                        
+                        // Campo Cédula
+                        React.createElement('div', { style: { marginBottom: '1rem' } },
+                            React.createElement('label', { 
+                                style: { display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' } 
+                            }, 'Cédula:'),
+                            React.createElement('input', {
+                                type: 'text',
+                                value: formData.valorDocumentoIdentidad,
+                                onChange: (e) => handleChange('valorDocumentoIdentidad', e.target.value),
+                                placeholder: 'Ej: 123456789 (solo números)',
+                                style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
+                                disabled: loading
+                            })
+                        ),
+                        
+                        // Campo Nombre
+                        React.createElement('div', { style: { marginBottom: '1rem' } },
+                            React.createElement('label', { 
+                                style: { display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' } 
+                            }, 'Nombre Completo:'),
+                            React.createElement('input', {
+                                type: 'text',
+                                value: formData.nombre,
+                                onChange: (e) => handleChange('nombre', e.target.value),
+                                placeholder: 'Ej: Juan Pérez García',
+                                style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
+                                disabled: loading
+                            })
+                        ),
+                        
+                        // Campo Fecha
+                        React.createElement('div', { style: { marginBottom: '1.5rem' } },
+                            React.createElement('label', { 
+                                style: { display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' } 
+                            }, 'Fecha de Contratación:'),
+                            React.createElement('input', {
+                                type: 'date',
+                                value: formData.fechaContratacion,
+                                onChange: (e) => handleChange('fechaContratacion', e.target.value),
+                                style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
+                                disabled: loading
+                            })
+                        ),
+                        
+                        // Botones
+                        React.createElement('div', { style: { display: 'flex', gap: '1rem', justifyContent: 'flex-end' } },
+                            React.createElement('button', {
+                                type: 'button',
+                                onClick: onClose,
+                                style: { 
+                                    padding: '0.75rem 1.5rem', 
+                                    backgroundColor: '#6c757d', 
+                                    color: 'white', 
+                                    border: 'none', 
+                                    borderRadius: '4px',
+                                    cursor: 'pointer'
+                                },
+                                disabled: loading
+                            }, 'Cancelar'),
+                            React.createElement('button', {
+                                type: 'submit',
+                                style: { 
+                                    padding: '0.75rem 1.5rem', 
+                                    backgroundColor: '#ff69b4', 
+                                    color: 'white', 
+                                    border: 'none', 
+                                    borderRadius: '4px',
+                                    cursor: loading ? 'not-allowed' : 'pointer',
+                                    opacity: loading ? 0.7 : 1
+                                },
+                                disabled: loading || cargandoPuestos
+                            }, loading ? 'Insertando...' : 'Insertar Empleado')
+                        )
+                    )
+                )
+            );
+        }
+
+        // Componente principal
+        function EmployeeTable() {
+            const [employees, setEmployees] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [filters, setFilters] = useState({ nombre: '', cedula: '' });
+            const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
+            const [mostrarFormulario, setMostrarFormulario] = useState(false);
+            const [logoutLoading, setLogoutLoading] = useState(false);
+
+            // Obtener información del usuario logueado
+            const username = localStorage.getItem('username') || 'Usuario';
+            const userId = localStorage.getItem('userId') || '1';
+            const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+
+            useEffect(() => {
+                if (!isLoggedIn) {
+                    setError('⚠️ Debes iniciar sesión primero');
+                    setTimeout(() => {
+                        window.location.href = 'login.html';
+                    }, 2000);
+                    return;
+                }
+                cargarEmpleados();
+            }, [isLoggedIn]);
+
+            const cargarEmpleados = async () => {
+                setLoading(true);
+                setError('');
+                try {
+                    console.log("🔄 Cargando empleados...");
+                    const response = await fetch('http://25.46.106.44:3000/api/empleados');
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log("Empleados cargados:", data.length);
+                        setEmployees(data);
+                        setSuccess(`${data.length} empleados cargados correctamente`);
+                    } else {
+                        throw new Error(`Error ${response.status}: ${response.statusText}`);
+                    }
+                } catch (error) {
+                    console.error("❌ Error cargando empleados:", error);
+                    setError('No se pudieron cargar los empleados. Verifica que el backend esté ejecutándose.');
+                    
+                    setEmployees([
+                        { 
+                            Id: 1, 
+                            Nombre: 'Juan Pérez (Ejemplo)', 
+                            ValorDocumentoIdentidad: '123456789', 
+                            PuestoNombre: 'Desarrollador',
+                            SaldoVacaciones: 15, 
+                            EsActivo: true 
+                        },
+                        { 
+                            Id: 2, 
+                            Nombre: 'María García (Ejemplo)', 
+                            ValorDocumentoIdentidad: '987654321', 
+                            PuestoNombre: 'Diseñadora',
+                            SaldoVacaciones: 8, 
+                            EsActivo: true 
+                        }
+                    ]);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleLogout = async () => {
+                setLogoutLoading(true);
+                try {
+                    const response = await fetch('http://25.46.106.44:3000/api/logout', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            userId: userId,
+                            username: username
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        console.log('✅ Logout exitoso - Bitácora registrada');
+                    } else {
+                        console.log('⚠️ Logout completado pero sin bitácora:', result.message);
+                    }
+                } catch (error) {
+                    console.error('❌ Error en logout (continuando de todas formas):', error);
+                } finally {
+                    localStorage.removeItem('userId');
+                    localStorage.removeItem('username');
+                    localStorage.removeItem('isLoggedIn');
+                    window.location.href = 'login.html';
+                }
+            };
+
+            // Filtrar empleados
+            const filteredEmployees = employees.filter(employee => {
+                const nombre = employee.Nombre || employee.nombre || '';
+                const cedula = employee.ValorDocumentoIdentidad || employee.cedula || '';
+                
+                const nombreMatch = nombre.toLowerCase().includes(filters.nombre.toLowerCase());
+                const cedulaMatch = cedula.includes(filters.cedula);
+                
+                if (filters.nombre === '' && filters.cedula === '') {
+                    return true;
+                }
+                
+                return nombreMatch && cedulaMatch;
+            });
+
+            const handleFilterChange = (filterType, value) => {
+                setFilters(prev => ({
+                    ...prev,
+                    [filterType]: value
+                }));
+            };
+
+            const abrirActualizar = (employee) => {
+                const employeeData = encodeURIComponent(JSON.stringify({
+                    Id: employee.Id || employee.id,
+                    Nombre: employee.Nombre || employee.nombre,
+                    ValorDocumentoIdentidad: employee.ValorDocumentoIdentidad || employee.cedula,
+                    IdPuesto: employee.IdPuesto || employee.idPuesto,
+                    SaldoVacaciones: employee.SaldoVacaciones || employee.saldoVacaciones,
+                    EsActivo: employee.EsActivo !== undefined ? employee.EsActivo : employee.activo,
+                    PuestoNombre: employee.PuestoNombre || employee.puestoNombre
+                }));
+                
+                window.open(`actualizar.html?id=${employee.Id}&employeeData=${employeeData}`, '_blank');
+            };
+
+            const abrirFormulario = () => {
+                setMostrarFormulario(true);
+            };
+
+            const cerrarFormulario = () => {
+                setMostrarFormulario(false);
+            };
+
+            const recargarEmpleados = () => {
+                cargarEmpleados();
+            };
+
+            if (loading) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('h1', null, 'Lista de Empleados'),
+                    React.createElement('div', { className: 'loading' }, '🔄 Cargando empleados...')
+                );
+            }
+
+            if (!isLoggedIn) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('h1', null, 'Acceso Denegado'),
+                    React.createElement('div', { className: 'error-message' }, 
+                        'Debes iniciar sesión primero. Redirigiendo...'
+                    )
+                );
+            }
+
+            return React.createElement('div', { className: 'container' },
+                React.createElement('h1', null, 'Lista de Empleados'),
+                
+                // Información del usuario
+                React.createElement('div', { className: 'user-info' },
+                    ` Conectado como: ${username} (ID: ${userId}) `,
+                    React.createElement('button', {
+                        className: 'logout-btn',
+                        onClick: handleLogout,
+                        disabled: logoutLoading
+                    }, logoutLoading ? 'Cerrando sesión...' : 'Cerrar Sesión')
+                ),
+                
+                // Mensajes de éxito y error
+                error && React.createElement('div', { className: 'error-message' }, error),
+                success && React.createElement('div', { className: 'success-message' }, success),
+                
+                // Botones de acción
+                React.createElement('div', { className: 'button-container' },
+                    React.createElement('button', {
+                        onClick: recargarEmpleados,
+                        className: 'btn-secondary'
+                    }, 'Recargar'),
+                    React.createElement('button', {
+                        onClick: abrirFormulario,
+                        className: 'btn-primary'
+                    }, 'Insertar Empleado')
+                ),
+
+                // Filtros
+                React.createElement('div', { className: 'filters' },
+                    React.createElement('div', { className: 'filter-group' },
+                        React.createElement('label', null, 'Filtrar por Nombre:'),
+                        React.createElement('input', {
+                            type: 'text',
+                            placeholder: 'Ej: Juan Pérez',
+                            value: filters.nombre,
+                            onChange: (e) => handleFilterChange('nombre', e.target.value)
+                        })
+                    ),
+                    React.createElement('div', { className: 'filter-group' },
+                        React.createElement('label', null, 'Filtrar por Cédula:'),
+                        React.createElement('input', {
+                            type: 'text',
+                            placeholder: 'Ej: 123456789',
+                            value: filters.cedula,
+                            onChange: (e) => handleFilterChange('cedula', e.target.value)
+                        })
+                    )
+                ),
+
+                // Contador de resultados
+                React.createElement('p', { style: { marginBottom: '1rem', color: '#666' } }, 
+                    `Mostrando ${filteredEmployees.length} de ${employees.length} empleados`),
+
+                // Tabla 
+                React.createElement('table', { className: 'employee-table' },
+                    React.createElement('thead', null,
+                        React.createElement('tr', null,
+                            React.createElement('th', null, 'ID'),
+                            React.createElement('th', null, 'Nombre'),
+                            React.createElement('th', null, 'Cédula'),
+                            React.createElement('th', null, 'Puesto'),
+                            React.createElement('th', null, 'Saldo Vacaciones'),
+                            React.createElement('th', null, 'Activo')
+                        )
+                    ),
+                    React.createElement('tbody', null,
+                        filteredEmployees.length > 0 ? (
+                            filteredEmployees.map(employee => {
+                                const id = employee.Id || employee.id;
+                                const nombre = employee.Nombre || employee.nombre;
+                                const cedula = employee.ValorDocumentoIdentidad || employee.cedula;
+                                const puesto = employee.PuestoNombre || 'Sin puesto';
+                                const saldo = employee.SaldoVacaciones || employee.saldoVacaciones || 0;
+                                const activo = employee.EsActivo !== undefined ? employee.EsActivo : employee.activo;
+                                
+                                return React.createElement('tr', { 
+                                    key: id,
+                                    onClick: () => abrirActualizar(employee), 
+                                    style: { cursor: 'pointer' }
+                                },
+                                    React.createElement('td', null, id),
+                                    React.createElement('td', null, nombre),
+                                    React.createElement('td', null, cedula),
+                                    React.createElement('td', null, puesto),
+                                    React.createElement('td', null, `${saldo} días`),
+                                    React.createElement('td', null,
+                                        React.createElement('span', { 
+                                            className: activo ? 'status-active' : 'status-inactive'
+                                        }, activo ? 'Sí' : 'No')
+                                    )
+                                );
+                            })
+                        ) : (
+                            React.createElement('tr', null,
+                                React.createElement('td', { 
+                                    colSpan: '6', 
+                                    className: 'no-data'
+                                }, employees.length === 0 ? 
+                                    'No hay empleados registrados' : 
+                                    'No se encontraron empleados con los filtros aplicados'
+                                )
+                            )
+                        )
+                    )
+                ),
+
+                // Formulario modal
+                mostrarFormulario && React.createElement(InsertarEmpleadoForm, {
+                    onClose: cerrarFormulario,
+                    onEmpleadoInsertado: recargarEmpleados
+                })
+            );
+        }
+
+        // Render con React 18
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(EmployeeTable));
+    </script>
+</body>
+</html>
