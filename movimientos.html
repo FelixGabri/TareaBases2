@@ -187,16 +187,62 @@
             const [loading, setLoading] = useState(true);
 
             useEffect(() => {
-                // Obtener ID del empleado de la URL
-                const urlParams = new URLSearchParams(window.location.search);
-                const employeeId = urlParams.get('id');
+    const urlParams = new URLSearchParams(window.location.search);
+    const employeeId = urlParams.get('id');
 
-                if (!employeeId) {
-                    setLoading(false);
-                    return;
+    if (!employeeId) {
+        setLoading(false);
+        return;
+    }
+
+    const cargarDatos = async () => {
+        setLoading(true);
+        try {
+            // Cargar movimientos del backend
+            const response = await fetch(`http://localhost:3000/api/movimientos/empleado/${employeeId}`);
+            if (response.ok) {
+                const movimientosData = await response.json();
+                setMovimientos(movimientosData);
+            }
+            
+            // Datos de ejemplo del empleado (por ahora)
+            const employeesData = {
+                '1': { 
+                    id: 1, 
+                    nombre: 'Juan Pérez', 
+                    cedula: '123456789',
+                    saldoVacaciones: 15
+                },
+                '2': { 
+                    id: 2, 
+                    nombre: 'María García', 
+                    cedula: '987654321',
+                    saldoVacaciones: 8
+                },
+                '3': { 
+                    id: 3, 
+                    nombre: 'Carlos López', 
+                    cedula: '456123789',
+                    saldoVacaciones: 22
                 }
+            };
 
-                // Simular carga de datos 
+            const employeeData = employeesData[employeeId];
+            if (employeeData) {
+                setEmployee(employeeData);
+            }
+            
+        } catch (error) {
+            console.error('Error cargando datos:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    cargarDatos();
+}, []);
+
+                // Simular carga de datos
                 setTimeout(() => {
                     // Datos de ejemplo del empleado
                     const employeesData = {
