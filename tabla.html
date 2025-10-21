@@ -8,26 +8,128 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-        body { padding: 20px; font-family: Arial; background-color: white; }
-        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); border: 1px solid #e0e0e0; }
-        h1 { text-align: center; margin-bottom: 2rem; color: #333; }
-        .filters { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
-        .filter-group { flex: 1; min-width: 200px; }
-        .filter-group label { display: block; margin-bottom: 0.5rem; color: #333; }
-        .filter-group input { width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px; font-size: 1rem; }
-        .filter-group input:focus { outline: none; border-color: #ff69b4; }
-        .employee-table { width: 100%; border-collapse: collapse; margin-bottom: 2rem; }
-        .employee-table th, .employee-table td { padding: 1rem; text-align: left; border-bottom: 1px solid #e0e0e0; }
-        .employee-table th { background-color: #f8f9fa; font-weight: bold; color: #333; }
-        .employee-table tr:hover { background-color: #f8f9fa; cursor: pointer; }
-        .status-active { color: #28a745; font-weight: bold; }
-        .status-inactive { color: #dc3545; font-weight: bold; }
-        .button-container { text-align: center; }
-        .btn-primary { padding: 0.75rem 2rem; background-color: #ff69b4; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; }
-        .btn-primary:hover { background-color: #ff1493; }
-        .loading { text-align: center; padding: 2rem; color: #666; }
-        .no-data { text-align: center; padding: 2rem; color: #666; font-style: italic; }
-        .error-message { background-color: #ffe6e6; color: #d63384; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; text-align: center; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background-color: white;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e0e0e0;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #333;
+        }
+
+        .filters {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .filter-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+        }
+
+        .filter-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .filter-group input:focus {
+            outline: none;
+            border-color: #ff69b4;
+        }
+
+        .employee-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 2rem;
+        }
+
+        .employee-table th,
+        .employee-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .employee-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .employee-table tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .status-active {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .status-inactive {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        .button-container {
+            text-align: center;
+        }
+
+        .btn-primary {
+            padding: 0.75rem 2rem;
+            background-color: #ff69b4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+
+        .btn-primary:hover {
+            background-color: #ff1493;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -36,262 +138,32 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // Componente del formulario de inserción
-        function InsertarEmpleadoForm({ onClose, onEmpleadoInsertado }) {
-            const [formData, setFormData] = useState({
-                idPuesto: '',
-                valorDocumentoIdentidad: '',
-                nombre: '',
-                fechaContratacion: ''
-            });
-            const [loading, setLoading] = useState(false);
-            const [error, setError] = useState('');
-
-            const handleSubmit = async (e) => {
-                e.preventDefault();
-                setLoading(true);
-                setError('');
-
-                // Validaciones
-                if (!formData.idPuesto || !formData.valorDocumentoIdentidad || !formData.nombre || !formData.fechaContratacion) {
-                    setError('Todos los campos son requeridos');
-                    setLoading(false);
-                    return;
-                }
-
-                try {
-                    const response = await fetch('http://localhost:3000/api/empleados', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(formData)
-                    });
-
-                    const result = await response.json();
-
-                    if (result.success) {
-                        alert('✅ Empleado insertado correctamente');
-                        onEmpleadoInsertado();
-                        onClose();
-                    } else {
-                        setError(result.message || 'Error al insertar empleado');
-                    }
-                } catch (error) {
-                    console.error('Error:', error);
-                    setError('Error de conexión con el servidor');
-                } finally {
-                    setLoading(false);
-                }
-            };
-
-            const handleChange = (field, value) => {
-                setFormData(prev => ({
-                    ...prev,
-                    [field]: value
-                }));
-            };
-
-            return React.createElement('div', { 
-                style: { 
-                    position: 'fixed', 
-                    top: 0, 
-                    left: 0, 
-                    right: 0, 
-                    bottom: 0, 
-                    backgroundColor: 'rgba(0,0,0,0.5)', 
-                    display: 'flex', 
-                    justifyContent: 'center', 
-                    alignItems: 'center',
-                    zIndex: 1000
-                } 
-            },
-                React.createElement('div', { 
-                    style: { 
-                        backgroundColor: 'white', 
-                        padding: '2rem', 
-                        borderRadius: '8px', 
-                        width: '90%', 
-                        maxWidth: '500px',
-                        boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
-                    } 
-                },
-                    React.createElement('h2', { style: { marginBottom: '1.5rem', color: '#333' } }, 'Insertar Nuevo Empleado'),
-                    
-                    error && React.createElement('div', { 
-                        style: { 
-                            backgroundColor: '#ffe6e6', 
-                            color: '#d63384', 
-                            padding: '0.75rem', 
-                            borderRadius: '4px', 
-                            marginBottom: '1rem' 
-                        } 
-                    }, error),
-                    
-                    React.createElement('form', { onSubmit: handleSubmit },
-                        // Campo Puesto
-                        React.createElement('div', { style: { marginBottom: '1rem' } },
-                            React.createElement('label', { 
-                                style: { display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' } 
-                            }, 'Puesto:'),
-                            React.createElement('select', {
-                                value: formData.idPuesto,
-                                onChange: (e) => handleChange('idPuesto', e.target.value),
-                                style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
-                                disabled: loading
-                            },
-                                React.createElement('option', { value: '' }, 'Seleccionar puesto'),
-                                React.createElement('option', { value: '1' }, 'Desarrollador'),
-                                React.createElement('option', { value: '2' }, 'Diseñador'),
-                                React.createElement('option', { value: '3' }, 'Gerente'),
-                                React.createElement('option', { value: '4' }, 'Analista')
-                            )
-                        ),
-                        
-                        // Campo Cédula
-                        React.createElement('div', { style: { marginBottom: '1rem' } },
-                            React.createElement('label', { 
-                                style: { display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' } 
-                            }, 'Cédula:'),
-                            React.createElement('input', {
-                                type: 'text',
-                                value: formData.valorDocumentoIdentidad,
-                                onChange: (e) => handleChange('valorDocumentoIdentidad', e.target.value),
-                                placeholder: 'Ej: 123456789',
-                                style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
-                                disabled: loading
-                            })
-                        ),
-                        
-                        // Campo Nombre
-                        React.createElement('div', { style: { marginBottom: '1rem' } },
-                            React.createElement('label', { 
-                                style: { display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' } 
-                            }, 'Nombre Completo:'),
-                            React.createElement('input', {
-                                type: 'text',
-                                value: formData.nombre,
-                                onChange: (e) => handleChange('nombre', e.target.value),
-                                placeholder: 'Ej: Juan Pérez García',
-                                style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
-                                disabled: loading
-                            })
-                        ),
-                        
-                        // Campo Fecha
-                        React.createElement('div', { style: { marginBottom: '1.5rem' } },
-                            React.createElement('label', { 
-                                style: { display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' } 
-                            }, 'Fecha de Contratación:'),
-                            React.createElement('input', {
-                                type: 'date',
-                                value: formData.fechaContratacion,
-                                onChange: (e) => handleChange('fechaContratacion', e.target.value),
-                                style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
-                                disabled: loading
-                            })
-                        ),
-                        
-                        // Botones
-                        React.createElement('div', { style: { display: 'flex', gap: '1rem', justifyContent: 'flex-end' } },
-                            React.createElement('button', {
-                                type: 'button',
-                                onClick: onClose,
-                                style: { 
-                                    padding: '0.75rem 1.5rem', 
-                                    backgroundColor: '#6c757d', 
-                                    color: 'white', 
-                                    border: 'none', 
-                                    borderRadius: '4px',
-                                    cursor: 'pointer'
-                                },
-                                disabled: loading
-                            }, 'Cancelar'),
-                            React.createElement('button', {
-                                type: 'submit',
-                                style: { 
-                                    padding: '0.75rem 1.5rem', 
-                                    backgroundColor: '#ff69b4', 
-                                    color: 'white', 
-                                    border: 'none', 
-                                    borderRadius: '4px',
-                                    cursor: loading ? 'not-allowed' : 'pointer',
-                                    opacity: loading ? 0.7 : 1
-                                },
-                                disabled: loading
-                            }, loading ? 'Insertando...' : 'Insertar Empleado')
-                        )
-                    )
-                )
-            );
-        }
-
-        // Componente principal
         function EmployeeTable() {
             const [employees, setEmployees] = useState([]);
             const [loading, setLoading] = useState(true);
-            const [filters, setFilters] = useState({ nombre: '', cedula: '' });
-            const [error, setError] = useState('');
-            const [mostrarFormulario, setMostrarFormulario] = useState(false);
+            const [filters, setFilters] = useState({
+                nombre: '',
+                cedula: ''
+            });
 
             useEffect(() => {
-                cargarEmpleados();
-            }, []);
-
-            const cargarEmpleados = async () => {
-                setLoading(true);
-                setError('');
-                try {
-                    console.log("🔄 Conectando con backend...");
-                    const response = await fetch('http://localhost:3000/api/empleados');
-                    
-                    if (response.ok) {
-                        const data = await response.json();
-                        console.log("✅ Datos del backend:", data);
-                        setEmployees(data);
-                    } else {
-                        throw new Error(`Error ${response.status}: ${response.statusText}`);
-                    }
-                } catch (error) {
-                    console.error("❌ Error cargando empleados:", error);
-                    setError('No se pudieron cargar los empleados. Verifica que el backend esté ejecutándose.');
-                    
-                    // Datos de ejemplo como fallback
-                    setEmployees([
-                        { 
-                            Id: 1, 
-                            Nombre: 'Juan Pérez (Ejemplo)', 
-                            ValorDocumentoIdentidad: '123456789', 
-                            PuestoNombre: 'Desarrollador',
-                            SaldoVacaciones: 15, 
-                            EsActivo: true 
-                        },
-                        { 
-                            Id: 2, 
-                            Nombre: 'María García (Ejemplo)', 
-                            ValorDocumentoIdentidad: '987654321', 
-                            PuestoNombre: 'Diseñadora',
-                            SaldoVacaciones: 8, 
-                            EsActivo: true 
-                        }
-                    ]);
-                } finally {
+                setTimeout(() => {
+                    setEmployees([]); // Array vacío
                     setLoading(false);
-                }
-            };
+                }, 500);
+            }, []);
 
             // Filtrar empleados
             const filteredEmployees = employees.filter(employee => {
-                const nombre = employee.Nombre || employee.nombre || '';
-                const cedula = employee.ValorDocumentoIdentidad || employee.cedula || '';
+                const nombreMatch = employee.nombre.toLowerCase().includes(filters.nombre.toLowerCase());
+                const cedulaMatch = employee.cedula.includes(filters.cedula);
                 
-                const nombreMatch = nombre.toLowerCase().includes(filters.nombre.toLowerCase());
-                const cedulaMatch = cedula.includes(filters.cedula);
-                
+                // Si ambos filtros están vacíos, mostrar todos
                 if (filters.nombre === '' && filters.cedula === '') {
                     return true;
                 }
                 
+                // Si hay filtros, aplicar lógica AND
                 return nombreMatch && cedulaMatch;
             });
 
@@ -302,50 +174,16 @@
                 }));
             };
 
-            const abrirActualizar = (employeeId) => {
-                window.open(`actualizar.html?id=${employeeId}`, '_blank');
-            };
-
-            const abrirFormulario = () => {
-                setMostrarFormulario(true);
-            };
-
-            const cerrarFormulario = () => {
-                setMostrarFormulario(false);
-            };
-
-            const recargarEmpleados = () => {
-                cargarEmpleados();
-            };
-
             if (loading) {
                 return React.createElement('div', { className: 'container' },
                     React.createElement('h1', null, 'Lista de Empleados'),
-                    React.createElement('div', { className: 'loading' }, '🔄 Conectando con el servidor...')
+                    React.createElement('div', { className: 'loading' }, 'Cargando datos...')
                 );
             }
 
             return React.createElement('div', { className: 'container' },
                 React.createElement('h1', null, 'Lista de Empleados'),
                 
-                // Mensaje de error
-                error && React.createElement('div', { className: 'error-message' }, error),
-                
-                // Botón recargar
-                React.createElement('div', { style: { textAlign: 'center', marginBottom: '1rem' } },
-                    React.createElement('button', {
-                        onClick: cargarEmpleados,
-                        style: { 
-                            padding: '0.5rem 1rem', 
-                            backgroundColor: '#6c757d', 
-                            color: 'white', 
-                            border: 'none', 
-                            borderRadius: '4px',
-                            cursor: 'pointer'
-                        }
-                    }, 'Recargar Datos')
-                ),
-
                 // Filtros
                 React.createElement('div', { className: 'filters' },
                     React.createElement('div', { className: 'filter-group' },
@@ -368,53 +206,41 @@
                     )
                 ),
 
-                // Contador de resultados
-                React.createElement('p', { style: { marginBottom: '1rem', color: '#666' } }, 
-                    `Mostrando ${filteredEmployees.length} de ${employees.length} empleados`),
-
-                // Tabla 
+                // Tabla
                 React.createElement('table', { className: 'employee-table' },
                     React.createElement('thead', null,
                         React.createElement('tr', null,
                             React.createElement('th', null, 'ID'),
                             React.createElement('th', null, 'Nombre'),
                             React.createElement('th', null, 'Cédula'),
-                            React.createElement('th', null, 'Puesto'),
-                            React.createElement('th', null, 'Saldo Vacaciones'),
+                            React.createElement('th', null, 'Salario'),
                             React.createElement('th', null, 'Activo')
                         )
                     ),
                     React.createElement('tbody', null,
                         filteredEmployees.length > 0 ? (
-                            filteredEmployees.map(employee => {
-                                const id = employee.Id || employee.id;
-                                const nombre = employee.Nombre || employee.nombre;
-                                const cedula = employee.ValorDocumentoIdentidad || employee.cedula;
-                                const puesto = employee.PuestoNombre || 'Sin puesto';
-                                const saldo = employee.SaldoVacaciones || employee.saldoVacaciones || 0;
-                                const activo = employee.EsActivo !== undefined ? employee.EsActivo : employee.activo;
-                                
-                                return React.createElement('tr', { 
-                                    key: id,
-                                    onClick: () => abrirActualizar(id)
+                            filteredEmployees.map(employee =>
+                                React.createElement('tr', { 
+                                    key: employee.id,
+                                    style: { cursor: 'pointer' },
+                                    onClick: () => window.open(`actualizar.html?id=${employee.id}`, '_blank')
                                 },
-                                    React.createElement('td', null, id),
-                                    React.createElement('td', null, nombre),
-                                    React.createElement('td', null, cedula),
-                                    React.createElement('td', null, puesto),
-                                    React.createElement('td', null, `${saldo} días`),
+                                    React.createElement('td', null, employee.id),
+                                    React.createElement('td', null, employee.nombre),
+                                    React.createElement('td', null, employee.cedula),
+                                    React.createElement('td', null, `$${employee.salario.toLocaleString()}`),
                                     React.createElement('td', null,
                                         React.createElement('span', { 
-                                            className: activo ? 'status-active' : 'status-inactive'
-                                        }, activo ? 'Sí' : 'No')
+                                            className: employee.activo ? 'status-active' : 'status-inactive'
+                                        }, employee.activo ? 'Sí' : 'No')
                                     )
-                                );
-                            })
+                                )
+                            )
                         ) : (
                             React.createElement('tr', null,
                                 React.createElement('td', { 
-                                    colSpan: '6', 
-                                    className: 'no-data'
+                                    colSpan: '5', 
+                                    style: { textAlign: 'center', padding: '2rem' } 
                                 }, employees.length === 0 ? 
                                     'No hay empleados registrados' : 
                                     'No se encontraron empleados con los filtros aplicados'
@@ -424,25 +250,18 @@
                     )
                 ),
 
-                // Botón Insertar
+                // Botón
                 React.createElement('div', { className: 'button-container' },
                     React.createElement('button', { 
                         className: 'btn-primary',
-                        onClick: abrirFormulario
+                        onClick: () => console.log('Redirigir a insertar empleado')
                     }, 'Insertar Empleado')
-                ),
-
-                // Formulario modal
-                mostrarFormulario && React.createElement(InsertarEmpleadoForm, {
-                    onClose: cerrarFormulario,
-                    onEmpleadoInsertado: recargarEmpleados
-                })
+                )
             );
         }
 
-        // Render con React 18
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(React.createElement(EmployeeTable));
+        // Renderizar la aplicación
+        ReactDOM.render(React.createElement(EmployeeTable), document.getElementById('root'));
     </script>
 </body>
 </html>
