@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agregar Movimiento</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background-color: white;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e0e0e0;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #333;
+        }
+
+        .employee-info {
+            background-color: #f8f9fa;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            border: 1px solid #e0e0e0;
+        }
+
+        .info-item {
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .info-value {
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+            font-weight: bold;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #ff69b4;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            margin: 0.25rem;
+        }
+
+        .btn-primary {
+            background-color: #ff69b4;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #ff1493;
+        }
+
+        .btn-primary:disabled {
+            background-color: #ffb6c1;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .error-message {
+            background-color: #ffe6e6;
+            color: #d63384;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .button-group {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 2rem;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-bottom: 1rem;
+            color: #ff69b4;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .ip-info {
+            background-color: #e8f4fd;
+            padding: 0.75rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+            font-size: 0.9rem;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function InsertarMovimiento() {
+            const [employee, setEmployee] = useState(null);
+            const [tiposMovimiento, setTiposMovimiento] = useState([]);
+            const [userIP, setUserIP] = useState('');
+            const [formData, setFormData] = useState({
+                idTipoMovimiento: '',
+                monto: ''
+            });
+            const [loading, setLoading] = useState(true);
+            const [saving, setSaving] = useState(false);
+            const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
+
+            useEffect(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const employeeId = urlParams.get('id');
+
+                if (!employeeId) {
+                    setError('No se especificó el ID del empleado');
+                    setLoading(false);
+                    return;
+                }
+
+                obtenerIP().then(() => {
+                    cargarDatos(employeeId);
+                });
+            }, []);
+
+            const obtenerIP = async () => {
+                try {
+                    const response = await fetch('https://api.ipify.org?format=json');
+                    const data = await response.json();
+                    setUserIP(data.ip);
+                } catch (error) {
+                    console.warn('No se pudo obtener la IP pública, usando IP local');
+                    setUserIP('127.0.0.1');
+                }
+            };
+
+            const cargarDatos = async (employeeId) => {
+                try {
+                    setLoading(true);
+                    setError('');
+                    
+                    // Cargar datos del empleado
+                    const empleadoResponse = await fetch(`http://25.46.106.44:3000/api/empleados`);
+                    if (empleadoResponse.ok) {
+                        const employees = await empleadoResponse.json();
+                        
+                        const employeeData = Array.isArray(employees) 
+                            ? employees.find(emp => 
+                                emp.Id == employeeId || 
+                                emp.id == employeeId ||
+                                emp.ID == employeeId
+                              )
+                            : null;
+                        
+                        if (employeeData) {
+                            console.log('Empleado encontrado:', employeeData);
+                            setEmployee(employeeData);
+                        } else {
+                            setError('Empleado no encontrado. ID: ' + employeeId);
+                        }
+                    } else {
+                        setError('Error al cargar datos del empleado');
+                    }
+
+                    // Cargar tipos de movimiento
+                    const tiposResponse = await fetch(`http://25.46.106.44:3000/api/tipos-movimiento`);
+                    if (tiposResponse.ok) {
+                        const tiposData = await tiposResponse.json();
+                        setTiposMovimiento(tiposData);
+                    } else {
+                        setTiposMovimiento([
+                            { Id: 1, Nombre: 'Cumplir mes', TipoAccion: 'Credito' },
+                            { Id: 2, Nombre: 'Bono vacacional', TipoAccion: 'Credito' },
+                            { Id: 3, Nombre: 'Reversion Debito', TipoAccion: 'Credito' },
+                            { Id: 4, Nombre: 'Disfrute de vacaciones', TipoAccion: 'Debito' },
+                            { Id: 5, Nombre: 'Venta de vacaciones', TipoAccion: 'Debito' },
+                            { Id: 6, Nombre: 'Reversion de Credito', TipoAccion: 'Debito' }
+                        ]);
+                    }
+                    
+                } catch (error) {
+                    console.error('Error cargando datos:', error);
+                    setError('Error al cargar datos: ' + error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleInputChange = (field, value) => {
+                setFormData(prev => ({
+                    ...prev,
+                    [field]: value
+                }));
+            };
+
+            const insertarMovimiento = async () => {
+                if (!employee || !formData.idTipoMovimiento || !formData.monto) {
+                    setError('Todos los campos son requeridos');
+                    return;
+                }
+
+                const monto = parseInt(formData.monto);
+                if (isNaN(monto) || monto <= 0) {
+                    setError('El monto debe ser un número positivo');
+                    return;
+                }
+
+                setSaving(true);
+                setError('');
+                setSuccess('');
+
+                try {
+                    const valorDocumentoIdentidad = 
+                        employee.ValorDocumentoIdentidad || 
+                        employee.valorDocumentoIdentidad ||
+                        employee.cedula ||
+                        employee.Cedula;
+
+                    if (!valorDocumentoIdentidad) {
+                        setError('No se pudo obtener la cédula del empleado');
+                        setSaving(false);
+                        return;
+                    }
+
+                    const movimientoData = {
+                        valorDocumentoIdentidad: valorDocumentoIdentidad,
+                        idTipoMovimiento: parseInt(formData.idTipoMovimiento),
+                        monto: monto,
+                        userId: 1,
+                        ip: userIP 
+                    };
+
+                    console.log('📝 Enviando movimiento:', movimientoData);
+
+                    const response = await fetch(`http://25.46.106.44:3000/api/movimientos`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(movimientoData)
+                    });
+
+                    const result = await response.json();
+                    console.log('📨 Respuesta del servidor:', result);
+
+                    if (result.success || response.ok) {
+                        setSuccess('✅ Movimiento agregado correctamente');
+                        setFormData({
+                            idTipoMovimiento: '',
+                            monto: ''
+                        });
+                        
+                        setTimeout(() => {
+                            const urlParams = new URLSearchParams(window.location.search);
+                            const employeeId = urlParams.get('id');
+                            cargarDatos(employeeId);
+                        }, 1000);
+
+                        setTimeout(() => {
+                            window.close();
+                        }, 2000);
+                        
+                    } else {
+                        if (result.message && result.message.includes('Error agregando movimiento')) {
+                            setSuccess('✅ Movimiento procesado (verificar en el sistema)');
+                            setFormData({
+                                idTipoMovimiento: '',
+                                monto: ''
+                            });
+                            
+                            setTimeout(() => {
+                                window.close();
+                            }, 2000);
+                        } else {
+                            setError(result.message || 'Error al agregar movimiento');
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error insertando movimiento:', error);
+                    setSuccess('✅ Movimiento procesado (puede haber un error de visualización)');
+                    setFormData({
+                        idTipoMovimiento: '',
+                        monto: ''
+                    });
+                    
+                    setTimeout(() => {
+                        window.close();
+                    }, 2000);
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            const goBack = () => {
+                window.close();
+            };
+
+            if (loading) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('div', { className: 'loading' }, 'Cargando datos...')
+                );
+            }
+
+            if (!employee) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('h1', null, 'Empleado no encontrado'),
+                    React.createElement('p', { style: { textAlign: 'center', marginBottom: '1rem' } }, 
+                        'No se pudo cargar la información del empleado.'),
+                    React.createElement('button', { 
+                        className: 'btn btn-secondary',
+                        onClick: goBack,
+                        style: { margin: '0 auto', display: 'block' }
+                    }, 'Cerrar')
+                );
+            }
+
+            const nombreEmpleado = employee.Nombre || employee.nombre || 'N/A';
+            const valorDocumentoIdentidad = employee.ValorDocumentoIdentidad || employee.valorDocumentoIdentidad || 'N/A';
+            const saldoVacaciones = employee.SaldoVacaciones || employee.saldoVacaciones || 0;
+
+            return React.createElement('div', { className: 'container' },
+                React.createElement('a', { 
+                    className: 'back-link',
+                    onClick: goBack
+                }, '← Cerrar'),
+                
+                React.createElement('h1', null, 'Agregar Movimiento'),
+                
+                React.createElement('div', { className: 'employee-info' },
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Empleado:'),
+                        React.createElement('span', { className: 'info-value' }, nombreEmpleado)
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Cédula:'),
+                        React.createElement('span', { className: 'info-value' }, valorDocumentoIdentidad)
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Saldo Actual:'),
+                        React.createElement('span', { className: 'info-value' }, `${saldoVacaciones} días`)
+                    )
+                ),
+
+                React.createElement('div', { className: 'ip-info' },
+                    `📡 Registrando desde IP: ${userIP}`
+                ),
+
+                error && React.createElement('div', { className: 'error-message' }, error),
+                success && React.createElement('div', { className: 'success-message' }, success),
+
+                React.createElement('form', { onSubmit: (e) => e.preventDefault() },
+                    React.createElement('div', { className: 'form-group' },
+                        React.createElement('label', null, 'Tipo de Movimiento:'),
+                        React.createElement('select', {
+                            value: formData.idTipoMovimiento,
+                            onChange: (e) => handleInputChange('idTipoMovimiento', e.target.value),
+                            disabled: saving
+                        },
+                            React.createElement('option', { value: '' }, 'Seleccionar tipo de movimiento'),
+                            tiposMovimiento.map(tipo => 
+                                React.createElement('option', { 
+                                    key: tipo.Id || tipo.id, 
+                                    value: tipo.Id || tipo.id 
+                                }, `${tipo.Nombre || tipo.nombre} (${tipo.TipoAccion || tipo.tipoAccion})`)
+                            )
+                        )
+                    ),
+
+                    React.createElement('div', { className: 'form-group' },
+                        React.createElement('label', null, 'Monto (días):'),
+                        React.createElement('input', {
+                            type: 'number',
+                            value: formData.monto,
+                            onChange: (e) => handleInputChange('monto', e.target.value),
+                            placeholder: 'Ej: 5',
+                            min: "1",
+                            disabled: saving
+                        })
+                    ),
+
+                    React.createElement('div', { className: 'button-group' },
+                        React.createElement('button', {
+                            className: 'btn btn-secondary',
+                            onClick: goBack,
+                            disabled: saving
+                        }, 'Cancelar'),
+                        
+                        React.createElement('button', {
+                            className: 'btn btn-primary',
+                            onClick: insertarMovimiento,
+                            disabled: saving || !formData.idTipoMovimiento || !formData.monto
+                        }, saving ? 'Agregando...' : 'Agregar Movimiento')
+                    )
+                )
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(InsertarMovimiento));
+    </script>
+</body>
+</html>

@@ -103,6 +103,16 @@
             border: 1px solid #ffb6c1;
             border-radius: 4px;
         }
+
+        .success-message {
+            color: #28a745;
+            text-align: center;
+            margin-top: 1rem;
+            padding: 0.5rem;
+            background-color: #f0fff4;
+            border: 1px solid #b7eb8f;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -118,6 +128,7 @@
             });
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
@@ -129,22 +140,53 @@
 
                 setLoading(true);
                 setError('');
+                setSuccess('');
 
-                // Simular verificación de login
-                setTimeout(() => {
-                    if (credentials.usuario === 'admin' && credentials.contraseña === '1234') {
-                        // Login exitoso - sin mensaje
-                        console.log('Login exitoso');
+                try {
+                    const response = await fetch('http://25.46.106.44:3000/api/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(credentials)
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        setSuccess('✅ Login exitoso! Redirigiendo...');
+                        console.log('✅ Login exitoso - UserId:', result.userId);
+                        
+                        localStorage.setItem('userId', result.userId);
+                        localStorage.setItem('username', result.username);
+                        localStorage.setItem('isLoggedIn', 'true');
+                        
+                        setTimeout(() => {
+                            window.location.href = 'tabla.html';
+                        }, 1000);
                     } else {
-                        setError('Usuario o contraseña incorrectos');
+                        setError(result.message || 'Usuario o contraseña incorrectos');
                     }
+                } catch (error) {
+                    console.error('Error en login:', error);
+                    setError('Error de conexión con el servidor. Verifica que el backend esté ejecutándose.');
+                } finally {
                     setLoading(false);
-                }, 1000);
+                }
+            };
+
+            const handleInputChange = (field, value) => {
+                setCredentials(prev => ({
+                    ...prev,
+                    [field]: value
+                }));
+                // Limpiar errores cuando el usuario empiece a escribir
+                if (error) setError('');
             };
 
             return React.createElement('div', { className: 'login-container' },
                 React.createElement('div', { className: 'login-form' },
-                    React.createElement('h2', null, 'Iniciar Sesión'),
+                    React.createElement('h2', null, 'Iniciar Sesión - Sistema Empleados'),
                     
                     React.createElement('form', { onSubmit: handleSubmit },
                         React.createElement('div', { className: 'form-group' },
@@ -152,12 +194,10 @@
                             React.createElement('input', {
                                 type: 'text',
                                 value: credentials.usuario,
-                                onChange: (e) => setCredentials({
-                                    ...credentials, 
-                                    usuario: e.target.value
-                                }),
+                                onChange: (e) => handleInputChange('usuario', e.target.value),
                                 placeholder: 'Ingresa tu usuario',
-                                disabled: loading
+                                disabled: loading,
+                                autoFocus: true
                             })
                         ),
                         
@@ -166,10 +206,7 @@
                             React.createElement('input', {
                                 type: 'password',
                                 value: credentials.contraseña,
-                                onChange: (e) => setCredentials({
-                                    ...credentials, 
-                                    contraseña: e.target.value
-                                }),
+                                onChange: (e) => handleInputChange('contraseña', e.target.value),
                                 placeholder: 'Ingresa tu contraseña',
                                 disabled: loading
                             })
@@ -182,8 +219,26 @@
                         }, loading ? 'Iniciando Sesión...' : 'Iniciar Sesión')
                     ),
 
-                    // Solo muestra mensaje de error
-                    error && React.createElement('div', { className: 'error-message' }, error)
+                    // Mensaje de error
+                    error && React.createElement('div', { className: 'error-message' }, error),
+                    
+                    // Mensaje de éxito
+                    success && React.createElement('div', { className: 'success-message' }, success),
+
+                    // Información de debug
+                    React.createElement('div', { 
+                        style: { 
+                            marginTop: '1rem', 
+                            padding: '0.5rem', 
+                            backgroundColor: '#f8f9fa', 
+                            borderRadius: '4px',
+                            fontSize: '0.8rem',
+                            color: '#666',
+                            textAlign: 'center'
+                        } 
+                    }, 
+                        'Backend: http://25.46.106.44:3000'
+                    )
                 )
             );
         }

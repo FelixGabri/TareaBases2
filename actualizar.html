@@ -21,7 +21,7 @@
         }
 
         .container {
-            max-width: 600px;
+            max-width: 800px;
             margin: 0 auto;
             background: white;
             padding: 2rem;
@@ -179,6 +179,16 @@
         .back-link:hover {
             text-decoration: underline;
         }
+
+        .debug-info {
+            background-color: #fff3cd;
+            padding: 0.5rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            font-size: 0.8rem;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
     </style>
 </head>
 <body>
@@ -189,19 +199,44 @@
 
         function ActualizarEmpleado() {
             const [employee, setEmployee] = useState(null);
+            const [puestos, setPuestos] = useState([]);
+            const [loggedInUser, setLoggedInUser] = useState(null);
             const [formData, setFormData] = useState({
                 idPuesto: '',
                 valorDocumentoIdentidad: '',
                 nombre: ''
             });
-            const [loading, setLoading] = useState(true);
+            const [loading, setLoading] = useState(false);
             const [updating, setUpdating] = useState(false);
             const [error, setError] = useState('');
             const [success, setSuccess] = useState('');
+            const [debugInfo, setDebugInfo] = useState('');
 
             useEffect(() => {
                 const urlParams = new URLSearchParams(window.location.search);
                 const employeeId = urlParams.get('id');
+                const employeeDataParam = urlParams.get('employeeData');
+
+                const storedUserId = localStorage.getItem('userId');
+                const storedUsername = localStorage.getItem('username');
+                const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+                
+                if (!isLoggedIn) {
+                    setError('Debes iniciar sesión primero');
+                    setLoading(false);
+                    return;
+                }
+
+                if (storedUserId) {
+                    setLoggedInUser({ 
+                        Id: storedUserId, 
+                        Nombre: storedUsername || 'Usuario' 
+                    });
+                } else {
+                    setError('No se encontró información de usuario logueado');
+                    setLoading(false);
+                    return;
+                }
 
                 if (!employeeId) {
                     setError('No se especificó el ID del empleado');
@@ -209,36 +244,101 @@
                     return;
                 }
 
-                cargarEmpleado(employeeId);
+                if (employeeDataParam) {
+                    try {
+                        const employeeData = JSON.parse(decodeURIComponent(employeeDataParam));
+                        console.log('📝 Datos del empleado desde tabla:', employeeData);
+                        setEmployee(employeeData);
+                        setFormData({
+                            idPuesto: employeeData.IdPuesto ? employeeData.IdPuesto.toString() : '',
+                            valorDocumentoIdentidad: employeeData.ValorDocumentoIdentidad || '',
+                            nombre: employeeData.Nombre || ''
+                        });
+                        setDebugInfo('✅ Datos cargados desde tabla');
+                    } catch (error) {
+                        console.error('Error parseando datos del empleado:', error);
+                        cargarEmpleadoDesdeAPI(employeeId);
+                    }
+                } else {
+                    cargarEmpleadoDesdeAPI(employeeId);
+                }
+
+                cargarPuestos();
             }, []);
 
-            const cargarEmpleado = async (employeeId) => {
+            const cargarEmpleadoDesdeAPI = async (employeeId) => {
                 try {
                     setLoading(true);
-                    const response = await fetch(`http://localhost:3000/api/empleados`);
+                    console.log('🔄 Cargando empleado desde API, ID:', employeeId);
+                    
+                    const response = await fetch(`http://25.46.106.44:3000/api/empleados/${employeeId}`);
                     
                     if (response.ok) {
-                        const employees = await response.json();
-                        const employeeData = employees.find(emp => emp.Id == employeeId);
+                        const employeeData = await response.json();
+                        console.log('📊 Empleado cargado desde API:', employeeData);
                         
-                        if (employeeData) {
+                        if (employeeData && employeeData.Id) {
                             setEmployee(employeeData);
                             setFormData({
                                 idPuesto: employeeData.IdPuesto ? employeeData.IdPuesto.toString() : '',
                                 valorDocumentoIdentidad: employeeData.ValorDocumentoIdentidad || '',
                                 nombre: employeeData.Nombre || ''
                             });
+                            setDebugInfo('✅ Datos cargados desde API');
                         } else {
-                            setError('Empleado no encontrado');
+                            setError('Empleado no encontrado en la respuesta del API');
                         }
                     } else {
-                        throw new Error('Error al cargar empleados');
+                        const errorText = await response.text();
+                        throw new Error(`Error ${response.status}: ${errorText}`);
                     }
                 } catch (error) {
                     console.error('Error cargando empleado:', error);
-                    setError('Error al cargar datos del empleado');
+                    setError(`Error al cargar datos del empleado: ${error.message}`);
                 } finally {
                     setLoading(false);
+                }
+            };
+
+            const cargarPuestos = async () => {
+                try {
+                    console.log('🔄 Cargando puestos...');
+                    const response = await fetch('http://25.46.106.44:3000/api/puestos');
+                    
+                    if (response.ok) {
+                        const puestosData = await response.json();
+                        console.log('📊 Puestos cargados:', puestosData);
+                        setPuestos(puestosData);
+                    } else {
+                        console.log('⚠️ Usando puestos de respaldo');
+                        setPuestos([
+                            { Id: 1, Nombre: 'Albañil' },
+                            { Id: 2, Nombre: 'Asistente' },
+                            { Id: 3, Nombre: 'Cajero' },
+                            { Id: 4, Nombre: 'Camarero' },
+                            { Id: 5, Nombre: 'Conductor' },
+                            { Id: 6, Nombre: 'Conserje' },
+                            { Id: 7, Nombre: 'Cuidador' },
+                            { Id: 8, Nombre: 'Fontanero' },
+                            { Id: 9, Nombre: 'Niñera' },
+                            { Id: 10, Nombre: 'Recepcionista' }
+                        ]);
+                    }
+                } catch (error) {
+                    console.error('Error cargando puestos:', error);
+                    // Puestos de respaldo
+                    setPuestos([
+                        { Id: 1, Nombre: 'Albañil' },
+                        { Id: 2, Nombre: 'Asistente' },
+                        { Id: 3, Nombre: 'Cajero' },
+                        { Id: 4, Nombre: 'Camarero' },
+                        { Id: 5, Nombre: 'Conductor' },
+                        { Id: 6, Nombre: 'Conserje' },
+                        { Id: 7, Nombre: 'Cuidador' },
+                        { Id: 8, Nombre: 'Fontanero' },
+                        { Id: 9, Nombre: 'Niñera' },
+                        { Id: 10, Nombre: 'Recepcionista' }
+                    ]);
                 }
             };
 
@@ -250,80 +350,100 @@
             };
 
             const actualizarEmpleado = async () => {
-    if (!employee) return;
+                if (!employee || !loggedInUser) return;
 
-    setUpdating(true);
-    setError('');
-    setSuccess('');
+                setUpdating(true);
+                setError('');
+                setSuccess('');
 
-    try {
-        const response = await fetch(`http://localhost:3000/api/empleados/${employee.Id}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(formData)
-        });
+                try {
+                    const updateData = {
+                        idPuesto: parseInt(formData.idPuesto),
+                        valorDocumentoIdentidad: formData.valorDocumentoIdentidad,
+                        nombre: formData.nombre,
+                        userId: parseInt(loggedInUser.Id)
+                    };
 
-        const result = await response.json();
+                    console.log('📤 Enviando datos de actualización:', updateData);
 
-        if (result.success) {
-            setSuccess('✅ Empleado actualizado correctamente');
-            
-            // Actualizar datos locales
-            setEmployee(prev => ({
-                ...prev,
-                Nombre: formData.nombre,
-                ValorDocumentoIdentidad: formData.valorDocumentoIdentidad,
-                IdPuesto: parseInt(formData.idPuesto)
-            }));
-        } else {
-            setError(result.message || 'Error al actualizar empleado');
-        }
-    } catch (error) {
-        console.error('Error actualizando empleado:', error);
-        setError('Error de conexión con el servidor');
-    } finally {
-        setUpdating(false);
-    }
-};
+                    const response = await fetch(`http://25.46.106.44:3000/api/empleados/${employee.Id}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(updateData)
+                    });
+
+                    const result = await response.json();
+                    console.log('📥 Respuesta del servidor:', result);
+
+                    if (result.success) {
+                        setSuccess('✅ Empleado actualizado correctamente');
+                        
+                        // Actualizar datos locales
+                        setEmployee(prev => ({
+                            ...prev,
+                            Nombre: formData.nombre,
+                            ValorDocumentoIdentidad: formData.valorDocumentoIdentidad,
+                            IdPuesto: parseInt(formData.idPuesto)
+                        }));
+                    } else {
+                        setError(result.message || 'Error al actualizar empleado');
+                    }
+                } catch (error) {
+                    console.error('Error actualizando empleado:', error);
+                    setError('Error de conexión con el servidor');
+                } finally {
+                    setUpdating(false);
+                }
+            };
 
             const eliminarEmpleado = async () => {
-    if (!employee || !confirm('¿Estás seguro de que deseas eliminar este empleado?')) {
-        return;
-    }
+                if (!employee || !loggedInUser || !confirm('¿Estás seguro de que deseas eliminar este empleado? Esta acción no se puede deshacer.')) {
+                    return;
+                }
 
-    setUpdating(true);
-    setError('');
-    setSuccess('');
+                setUpdating(true);
+                setError('');
+                setSuccess('');
 
-    try {
-        const response = await fetch(`http://localhost:3000/api/empleados/${employee.Id}`, {
-            method: 'DELETE'
-        });
+                try {
+                    const deleteData = {
+                        userId: parseInt(loggedInUser.Id)
+                    };
 
-        const result = await response.json();
+                    console.log('🗑️ Enviando solicitud de eliminación:', deleteData);
 
-        if (result.success) {
-            setSuccess('✅ Empleado eliminado correctamente');
-            
-            // Cerrar ventana después de 2 segundos
-            setTimeout(() => {
-                window.close();
-            }, 2000);
-        } else {
-            setError(result.message || 'Error al eliminar empleado');
-        }
-    } catch (error) {
-        console.error('Error eliminando empleado:', error);
-        setError('Error de conexión con el servidor');
-    } finally {
-        setUpdating(false);
-    }
-};
+                    const response = await fetch(`http://25.46.106.44:3000/api/empleados/${employee.Id}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(deleteData)
+                    });
+
+                    const result = await response.json();
+                    console.log('📥 Respuesta de eliminación:', result);
+
+                    if (result.success) {
+                        setSuccess('✅ Empleado eliminado correctamente');
+                        
+                        setTimeout(() => {
+                            window.close();
+                        }, 2000);
+                    } else {
+                        setError(result.message || 'Error al eliminar empleado');
+                    }
+                } catch (error) {
+                    console.error('Error eliminando empleado:', error);
+                    setError('Error de conexión con el servidor');
+                } finally {
+                    setUpdating(false);
+                }
+            };
 
             const abrirMovimientos = () => {
-                if (employee) {
+                if (employee && loggedInUser) {
                     window.open(`movimientos.html?id=${employee.Id}`, '_blank');
                 }
             };
@@ -349,10 +469,13 @@
             }
 
             return React.createElement('div', { className: 'container' },
+                // Información de debug
+                debugInfo && React.createElement('div', { className: 'debug-info' }, debugInfo),
+                
                 React.createElement('a', { 
                     className: 'back-link',
                     onClick: goBack
-                }, '← Cerrar'),
+                }, '← Volver a la tabla'),
                 
                 React.createElement('h1', null, 'Actualizar Empleado'),
                 
@@ -364,8 +487,24 @@
                         React.createElement('span', { className: 'info-value' }, employee.Id)
                     ),
                     React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Nombre:'),
+                        React.createElement('span', { className: 'info-value' }, employee.Nombre || 'N/A')
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Cédula:'),
+                        React.createElement('span', { className: 'info-value' }, employee.ValorDocumentoIdentidad || 'N/A')
+                    ),
+                    React.createElement('div', { className: 'info-item' },
+                        React.createElement('span', { className: 'info-label' }, 'Puesto Actual:'),
+                        React.createElement('span', { className: 'info-value' }, 
+                            puestos.find(p => p.Id === employee.IdPuesto)?.Nombre || 
+                            employee.PuestoNombre || 
+                            `ID: ${employee.IdPuesto}`)
+                    ),
+                    React.createElement('div', { className: 'info-item' },
                         React.createElement('span', { className: 'info-label' }, 'Saldo Vacaciones:'),
-                        React.createElement('span', { className: 'info-value' }, `${employee.SaldoVacaciones} días`)
+                        React.createElement('span', { className: 'info-value' }, 
+                            `${employee.SaldoVacaciones !== undefined ? employee.SaldoVacaciones : 'N/A'} días`)
                     )
                 ),
 
@@ -376,17 +515,19 @@
                 // Formulario de actualización
                 React.createElement('form', { onSubmit: (e) => e.preventDefault() },
                     React.createElement('div', { className: 'form-group' },
-                        React.createElement('label', null, 'Puesto:'),
+                        React.createElement('label', null, 'Nuevo Puesto:'),
                         React.createElement('select', {
                             value: formData.idPuesto,
                             onChange: (e) => handleInputChange('idPuesto', e.target.value),
                             disabled: updating
                         },
-                            React.createElement('option', { value: '' }, 'Seleccionar puesto'),
-                            React.createElement('option', { value: '1' }, 'Desarrollador'),
-                            React.createElement('option', { value: '2' }, 'Diseñador'),
-                            React.createElement('option', { value: '3' }, 'Gerente'),
-                            React.createElement('option', { value: '4' }, 'Analista')
+                            React.createElement('option', { value: '' }, 'Seleccionar nuevo puesto'),
+                            puestos.map(puesto => 
+                                React.createElement('option', { 
+                                    key: puesto.Id, 
+                                    value: puesto.Id 
+                                }, puesto.Nombre)
+                            )
                         )
                     ),
 
@@ -438,8 +579,9 @@
             );
         }
 
-        // Renderizar la aplicación
-        ReactDOM.render(React.createElement(ActualizarEmpleado), document.getElementById('root'));
+        // Renderizar la aplicación con React 18
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(ActualizarEmpleado));
     </script>
 </body>
 </html>

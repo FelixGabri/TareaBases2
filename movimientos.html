@@ -36,54 +36,56 @@
             color: #333;
         }
 
-        .employee-header {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 2rem;
+        .employee-summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 2rem;
-            padding: 1.5rem;
+            padding: 1rem;
             background-color: #f8f9fa;
             border-radius: 8px;
             border: 1px solid #e0e0e0;
         }
 
-        .employee-info h2 {
-            color: #333;
-            margin-bottom: 1rem;
-            font-size: 1.2rem;
-        }
-
-        .info-item {
-            margin-bottom: 0.5rem;
+        .employee-details {
             display: flex;
-            justify-content: space-between;
+            gap: 2rem;
+            align-items: center;
         }
 
-        .info-label {
+        .employee-detail {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .detail-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 0.25rem;
+        }
+
+        .detail-value {
+            font-size: 1rem;
             font-weight: bold;
-            color: #555;
-        }
-
-        .info-value {
             color: #333;
         }
 
         .saldo-vacaciones {
             text-align: center;
-            padding: 1rem;
+            padding: 0.5rem 1rem;
             background: white;
-            border-radius: 8px;
+            border-radius: 6px;
             border: 2px solid #ff69b4;
         }
 
         .saldo-label {
-            font-size: 1rem;
+            font-size: 0.8rem;
             color: #666;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.25rem;
         }
 
         .saldo-value {
-            font-size: 2rem;
+            font-size: 1.5rem;
             font-weight: bold;
             color: #ff69b4;
         }
@@ -106,8 +108,6 @@
             background-color: #f8f9fa;
             font-weight: bold;
             color: #333;
-            position: sticky;
-            top: 0;
         }
 
         .movements-table tr:hover {
@@ -173,6 +173,11 @@
             color: #dc3545;
             font-weight: bold;
         }
+
+        .button-container {
+            text-align: center;
+            margin-top: 2rem;
+        }
     </style>
 </head>
 <body>
@@ -187,104 +192,137 @@
             const [loading, setLoading] = useState(true);
 
             useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const employeeId = urlParams.get('id');
+                const urlParams = new URLSearchParams(window.location.search);
+                const employeeId = urlParams.get('id');
 
-    if (!employeeId) {
-        setLoading(false);
-        return;
-    }
+                if (!employeeId) {
+                    setLoading(false);
+                    return;
+                }
 
-    const cargarDatos = async () => {
-        setLoading(true);
-        try {
-            // Cargar movimientos del backend
-            const response = await fetch(`http://localhost:3000/api/movimientos/empleado/${employeeId}`);
-            if (response.ok) {
-                const movimientosData = await response.json();
-                setMovimientos(movimientosData);
-            }
-            
-            // Datos de ejemplo del empleado (por ahora)
-            const employeesData = {
-                '1': { 
-                    id: 1, 
-                    nombre: 'Juan Pérez', 
-                    cedula: '123456789',
-                    saldoVacaciones: 15
-                },
-                '2': { 
-                    id: 2, 
-                    nombre: 'María García', 
-                    cedula: '987654321',
-                    saldoVacaciones: 8
-                },
-                '3': { 
-                    id: 3, 
-                    nombre: 'Carlos López', 
-                    cedula: '456123789',
-                    saldoVacaciones: 22
+                cargarDatos(employeeId);
+            }, []);
+
+            const cargarDatos = async (employeeId) => {
+                setLoading(true);
+                try {
+                    const empleadoResponse = await fetch(`http://25.46.106.44:3000/api/empleados`);
+                    if (empleadoResponse.ok) {
+                        const employees = await empleadoResponse.json();
+                        const employeeData = employees.find(emp => emp.Id == employeeId);
+                        
+                        if (employeeData) {
+                            setEmployee(employeeData);
+                        }
+                    }
+
+                    // Cargar movimientos del empleado
+                    console.log(`📋 Cargando movimientos para empleado ID: ${employeeId}`);
+                    const movimientosResponse = await fetch(`http://25.46.106.44:3000/api/empleados/${employeeId}/movimientos`);
+                    
+                    if (movimientosResponse.ok) {
+                        const movimientosData = await movimientosResponse.json();
+                        console.log('📊 Movimientos recibidos:', movimientosData);
+                        setMovimientos(movimientosData);
+                    } else {
+                        console.error('❌ Error en respuesta de movimientos:', movimientosResponse.status);
+                    }
+                    
+                } catch (error) {
+                    console.error('Error cargando datos:', error);
+                } finally {
+                    setLoading(false);
                 }
             };
 
-            const employeeData = employeesData[employeeId];
-            if (employeeData) {
-                setEmployee(employeeData);
-            }
-            
-        } catch (error) {
-            console.error('Error cargando datos:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    cargarDatos();
-}, []);
-
-                // Simular carga de datos
-                setTimeout(() => {
-                    // Datos de ejemplo del empleado
-                    const employeesData = {
-                        '1': { 
-                            id: 1, 
-                            nombre: 'Juan Pérez', 
-                            cedula: '123456789',
-                            saldoVacaciones: 15.5
-                        },
-                        '2': { 
-                            id: 2, 
-                            nombre: 'María García', 
-                            cedula: '987654321',
-                            saldoVacaciones: 8.0
-                        },
-                        '3': { 
-                            id: 3, 
-                            nombre: 'Carlos López', 
-                            cedula: '456123789',
-                            saldoVacaciones: 22.0
-                        }
-                    };
-
-                    const employeeData = employeesData[employeeId];
-                    if (employeeData) {
-                        setEmployee(employeeData);
-                    }
-
-                    // Array vacío
-                    setMovimientos([]);
-                    setLoading(false);
-                }, 1000);
-            }, []);
-
             const goBack = () => {
-                window.close(); // Cierra esta ventana
+                window.close();
             };
 
-            const insertarMovimiento = () => {
-                // Abrir ventana para insertar movimiento
+            const agregarMovimiento = () => {
                 if (employee) {
-                    window.open(`insertar-movimiento.html?id=${employee.id}`, '_blank');
+                    window.open(`insertar-movimiento.html?id=${employee.Id}`, '_blank');
+                }
+            };
+
+            const recargarDatos = () => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const employeeId = urlParams.get('id');
+                if (employeeId) {
+                    cargarDatos(employeeId);
+                }
+            };
+
+            // Función para formatear fecha
+            const formatFecha = (fecha) => {
+                if (!fecha) return 'N/A';
+                try {
+                    return new Date(fecha).toLocaleDateString('es-ES');
+                } catch (e) {
+                    return fecha;
+                }
+            };
+
+            const formatFechaHora = (fecha) => {
+                if (!fecha) return 'N/A';
+                try {
+                    return new Date(fecha).toLocaleString('es-ES');
+                } catch (e) {
+                    return fecha;
+                }
+            };
+
+            const getTipoMovimiento = (movimiento) => {
+                if (movimiento.TipoMovimiento) return movimiento.TipoMovimiento;
+                
+                const tipoMap = {
+                    1: 'Cumplir mes',
+                    2: 'Bono vacacional', 
+                    3: 'Reversion Debito',
+                    4: 'Disfrute de vacaciones',
+                    5: 'Venta de vacaciones',
+                    6: 'Reversion de Credito'
+                };
+                
+                return tipoMap[movimiento.IdTipoMovimiento] || tipoMap[movimiento.TipoMovimientoId] || `Tipo ${movimiento.IdTipoMovimiento || movimiento.TipoMovimientoId}`;
+            };
+
+            const esCredito = (movimiento) => { 
+    if ([1, 2, 3].includes(movimiento.IdTipoMovimiento)) {
+        return true; 
+    }
+    if ([4, 5, 6].includes(movimiento.IdTipoMovimiento)) {
+        return false; 
+    }
+    
+    if (movimiento.TipoMovimiento) {
+        if (movimiento.TipoMovimiento.includes('Cumplir') || 
+            movimiento.TipoMovimiento.includes('Bono') ||
+            movimiento.TipoMovimiento.includes('Reversion Debito')) {
+            return true;
+        }
+        if (movimiento.TipoMovimiento.includes('Disfrute') ||
+            movimiento.TipoMovimiento.includes('Venta') ||
+            movimiento.TipoMovimiento.includes('Reversion de Credito')) {
+            return false;
+        }
+    }
+    
+    return movimiento.Monto >= 0;
+};
+
+            const formatMonto = (movimiento) => {
+                const esMovimientoCredito = esCredito(movimiento);
+                const montoAbsoluto = Math.abs(movimiento.Monto);
+                
+                if (esMovimientoCredito) {
+                    return React.createElement('span', { 
+                        className: 'positive'
+                    }, `+${montoAbsoluto} días`);
+                } else {
+                    return React.createElement('span', { 
+                        className: 'negative'
+                    }, `-${montoAbsoluto} días`);
                 }
             };
 
@@ -311,39 +349,51 @@
                         className: 'btn btn-secondary',
                         onClick: goBack
                     }, '← Cerrar'),
-                    React.createElement('button', {
-                        className: 'btn btn-primary',
-                        onClick: insertarMovimiento
-                    }, 'Insertar Movimiento')
+                    React.createElement('div', { style: { display: 'flex', gap: '1rem' } },
+                        React.createElement('button', {
+                            className: 'btn btn-primary',
+                            onClick: recargarDatos
+                        }, 'Recargar'),
+                        React.createElement('button', {
+                            className: 'btn btn-primary',
+                            onClick: agregarMovimiento
+                        }, 'Agregar Movimiento')
+                    )
                 ),
                 
                 React.createElement('h1', null, 'Movimientos de Vacaciones'),
 
-                // Información del empleado
-                React.createElement('div', { className: 'employee-header' },
-                    React.createElement('div', { className: 'employee-info' },
-                        React.createElement('h2', null, 'Información del Empleado'),
-                        React.createElement('div', { className: 'info-item' },
-                            React.createElement('span', { className: 'info-label' }, 'Nombre:'),
-                            React.createElement('span', { className: 'info-value' }, employee.nombre)
+                // Información del empleado en una línea
+                React.createElement('div', { className: 'employee-summary' },
+                    React.createElement('div', { className: 'employee-details' },
+                        React.createElement('div', { className: 'employee-detail' },
+                            React.createElement('span', { className: 'detail-label' }, 'ID:'),
+                            React.createElement('span', { className: 'detail-value' }, employee.Id)
                         ),
-                        React.createElement('div', { className: 'info-item' },
-                            React.createElement('span', { className: 'info-label' }, 'Cédula:'),
-                            React.createElement('span', { className: 'info-value' }, employee.cedula)
+                        React.createElement('div', { className: 'employee-detail' },
+                            React.createElement('span', { className: 'detail-label' }, 'Nombre:'),
+                            React.createElement('span', { className: 'detail-value' }, employee.Nombre)
                         ),
-                        React.createElement('div', { className: 'info-item' },
-                            React.createElement('span', { className: 'info-label' }, 'ID Empleado:'),
-                            React.createElement('span', { className: 'info-value' }, employee.id)
+                        React.createElement('div', { className: 'employee-detail' },
+                            React.createElement('span', { className: 'detail-label' }, 'Cédula:'),
+                            React.createElement('span', { className: 'detail-value' }, employee.ValorDocumentoIdentidad)
+                        ),
+                        React.createElement('div', { className: 'employee-detail' },
+                            React.createElement('span', { className: 'detail-label' }, 'Puesto:'),
+                            React.createElement('span', { className: 'detail-value' }, employee.PuestoNombre)
                         )
                     ),
                     React.createElement('div', { className: 'saldo-vacaciones' },
-                        React.createElement('div', { className: 'saldo-label' }, 'Saldo Actual de Vacaciones'),
-                        React.createElement('div', { className: 'saldo-value' }, `${employee.saldoVacaciones} días`)
+                        React.createElement('div', { className: 'saldo-label' }, 'Saldo Vacaciones'),
+                        React.createElement('div', { className: 'saldo-value' }, `${employee.SaldoVacaciones} días`)
                     )
                 ),
 
+                // Contador de resultados
+                React.createElement('p', { style: { marginBottom: '1rem', color: '#666' } }, 
+                    `Mostrando ${movimientos.length} movimientos`),
+
                 // Tabla de movimientos
-                React.createElement('h2', { style: { marginBottom: '1rem', color: '#333' } }, 'Historial de Movimientos'),
                 React.createElement('table', { className: 'movements-table' },
                     React.createElement('thead', null,
                         React.createElement('tr', null,
@@ -358,19 +408,19 @@
                     ),
                     React.createElement('tbody', null,
                         movimientos.length > 0 ? (
-                            movimientos.map(movimiento =>
-                                React.createElement('tr', { key: movimiento.id },
-                                    React.createElement('td', null, movimiento.fecha),
-                                    React.createElement('td', null, movimiento.tipoMovimiento),
-                                    React.createElement('td', { 
-                                        className: movimiento.monto >= 0 ? 'positive' : 'negative'
-                                    }, `${movimiento.monto >= 0 ? '+' : ''}${movimiento.monto} días`),
-                                    React.createElement('td', null, `${movimiento.nuevoSaldo} días`),
-                                    React.createElement('td', null, movimiento.usuario),
-                                    React.createElement('td', null, movimiento.ip),
-                                    React.createElement('td', null, movimiento.estampaTiempo)
-                                )
-                            )
+                            movimientos.map(movimiento => {
+                                return React.createElement('tr', { key: movimiento.Id },
+                                    React.createElement('td', null, formatFecha(movimiento.Fecha)),
+                                    React.createElement('td', null, getTipoMovimiento(movimiento)),
+                                    React.createElement('td', null, formatMonto(movimiento)),
+                                    React.createElement('td', null, `${movimiento.NuevoSaldo} días`),
+                                    React.createElement('td', null, movimiento.UsuarioNombre || 'Sistema'),
+                                    React.createElement('td', null, movimiento.IP || movimiento.PostInIP || 'N/A'),
+                                    React.createElement('td', null, 
+                                        formatFechaHora(movimiento.FechaMovimiento || movimiento.PostTime)
+                                    )
+                                );
+                            })
                         ) : (
                             React.createElement('tr', null,
                                 React.createElement('td', { 
@@ -380,6 +430,14 @@
                             )
                         )
                     )
+                ),
+
+                // Botón para agregar movimiento
+                React.createElement('div', { className: 'button-container' },
+                    React.createElement('button', {
+                        className: 'btn btn-primary',
+                        onClick: agregarMovimiento
+                    }, 'Agregar Nuevo Movimiento')
                 )
             );
         }

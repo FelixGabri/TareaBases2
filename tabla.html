@@ -11,6 +11,7 @@
         body { padding: 20px; font-family: Arial; background-color: white; }
         .container { max-width: 1000px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); border: 1px solid #e0e0e0; }
         h1 { text-align: center; margin-bottom: 2rem; color: #333; }
+        .header-info { text-align: center; margin-bottom: 1rem; color: #666; }
         .filters { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
         .filter-group { flex: 1; min-width: 200px; }
         .filter-group label { display: block; margin-bottom: 0.5rem; color: #333; }
@@ -22,12 +23,27 @@
         .employee-table tr:hover { background-color: #f8f9fa; cursor: pointer; }
         .status-active { color: #28a745; font-weight: bold; }
         .status-inactive { color: #dc3545; font-weight: bold; }
-        .button-container { text-align: center; }
-        .btn-primary { padding: 0.75rem 2rem; background-color: #ff69b4; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; }
+        .button-container { text-align: center; margin-bottom: 1rem; }
+        .btn-primary { padding: 0.75rem 2rem; background-color: #ff69b4; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; margin: 0 0.5rem; }
         .btn-primary:hover { background-color: #ff1493; }
+        .btn-secondary { padding: 0.75rem 2rem; background-color: #6c757d; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; margin: 0 0.5rem; }
+        .btn-secondary:hover { background-color: #5a6268; }
         .loading { text-align: center; padding: 2rem; color: #666; }
         .no-data { text-align: center; padding: 2rem; color: #666; font-style: italic; }
         .error-message { background-color: #ffe6e6; color: #d63384; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; text-align: center; }
+        .success-message { background-color: #f0fff4; color: #28a745; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; text-align: center; }
+        .user-info { background-color: #e7f3ff; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 1rem; text-align: center; }
+        .logout-btn { 
+            background: none; 
+            border: none; 
+            color: #ff69b4; 
+            cursor: pointer; 
+            text-decoration: underline; 
+            margin-left: 1rem;
+            padding: 0.25rem 0.5rem;
+        }
+        .logout-btn:hover { color: #ff1493; }
+        .logout-loading { color: #666; }
     </style>
 </head>
 <body>
@@ -36,7 +52,6 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // Componente del formulario de inserción
         function InsertarEmpleadoForm({ onClose, onEmpleadoInsertado }) {
             const [formData, setFormData] = useState({
                 idPuesto: '',
@@ -44,8 +59,50 @@
                 nombre: '',
                 fechaContratacion: ''
             });
+            const [puestos, setPuestos] = useState([]);
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState('');
+            const [cargandoPuestos, setCargandoPuestos] = useState(true);
+
+            // Obtener userId del login
+            const userId = localStorage.getItem('userId') || 1;
+
+            // Cargar puestos al montar el componente
+            useEffect(() => {
+                cargarPuestos();
+            }, []);
+
+            const cargarPuestos = async () => {
+    try {
+        const response = await fetch('http://25.46.106.44:3000/api/puestos');
+        console.log("Response status:", response.status); 
+        
+        if (response.ok) {
+            const data = await response.json();
+            console.log("Puestos recibidos:", data); 
+            setPuestos(data);
+        } else {
+            throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+    } catch (error) {
+        console.error('Error cargando puestos:', error);
+        setError('Error al cargar la lista de puestos: ' + error.message);
+        setPuestos([
+            { Id: 1, Nombre: 'Albañil' },
+            { Id: 2, Nombre: 'Asistente' },
+            { Id: 3, Nombre: 'Cajero' },
+            { Id: 4, Nombre: 'Camarero' },
+            { Id: 5, Nombre: 'Conductor' },
+            { Id: 6, Nombre: 'Conserje' },
+            { Id: 7, Nombre: 'Cuidador' },
+            { Id: 8, Nombre: 'Fontanero' },
+            { Id: 9, Nombre: 'Niñera' },
+            { Id: 10, Nombre: 'Recepcionista' }
+        ]);
+    } finally {
+        setCargandoPuestos(false);
+    }
+};
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
@@ -59,13 +116,23 @@
                     return;
                 }
 
+                // Validar que la cédula sea numérica
+                if (!/^\d+$/.test(formData.valorDocumentoIdentidad)) {
+                    setError('La cédula debe contener solo números');
+                    setLoading(false);
+                    return;
+                }
+
                 try {
-                    const response = await fetch('http://localhost:3000/api/empleados', {
+                    const response = await fetch('http://25.46.106.44:3000/api/empleados', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify(formData)
+                        body: JSON.stringify({
+                            ...formData,
+                            userId: userId 
+                        })
                     });
 
                     const result = await response.json();
@@ -134,17 +201,23 @@
                             React.createElement('label', { 
                                 style: { display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' } 
                             }, 'Puesto:'),
-                            React.createElement('select', {
-                                value: formData.idPuesto,
-                                onChange: (e) => handleChange('idPuesto', e.target.value),
-                                style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
-                                disabled: loading
-                            },
-                                React.createElement('option', { value: '' }, 'Seleccionar puesto'),
-                                React.createElement('option', { value: '1' }, 'Desarrollador'),
-                                React.createElement('option', { value: '2' }, 'Diseñador'),
-                                React.createElement('option', { value: '3' }, 'Gerente'),
-                                React.createElement('option', { value: '4' }, 'Analista')
+                            cargandoPuestos ? (
+                                React.createElement('div', { style: { padding: '0.75rem', textAlign: 'center', color: '#666' } }, 'Cargando puestos...')
+                            ) : (
+                                React.createElement('select', {
+                                    value: formData.idPuesto,
+                                    onChange: (e) => handleChange('idPuesto', e.target.value),
+                                    style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
+                                    disabled: loading
+                                },
+                                    React.createElement('option', { value: '' }, 'Seleccionar puesto'),
+                                    puestos.map(puesto => 
+                                        React.createElement('option', { 
+                                            key: puesto.Id, 
+                                            value: puesto.Id 
+                                        }, puesto.Nombre)
+                                    )
+                                )
                             )
                         ),
                         
@@ -157,7 +230,7 @@
                                 type: 'text',
                                 value: formData.valorDocumentoIdentidad,
                                 onChange: (e) => handleChange('valorDocumentoIdentidad', e.target.value),
-                                placeholder: 'Ej: 123456789',
+                                placeholder: 'Ej: 123456789 (solo números)',
                                 style: { width: '100%', padding: '0.75rem', border: '1px solid #ddd', borderRadius: '4px' },
                                 disabled: loading
                             })
@@ -218,7 +291,7 @@
                                     cursor: loading ? 'not-allowed' : 'pointer',
                                     opacity: loading ? 0.7 : 1
                                 },
-                                disabled: loading
+                                disabled: loading || cargandoPuestos
                             }, loading ? 'Insertando...' : 'Insertar Empleado')
                         )
                     )
@@ -232,23 +305,38 @@
             const [loading, setLoading] = useState(true);
             const [filters, setFilters] = useState({ nombre: '', cedula: '' });
             const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
             const [mostrarFormulario, setMostrarFormulario] = useState(false);
+            const [logoutLoading, setLogoutLoading] = useState(false);
+
+            // Obtener información del usuario logueado
+            const username = localStorage.getItem('username') || 'Usuario';
+            const userId = localStorage.getItem('userId') || '1';
+            const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
 
             useEffect(() => {
+                if (!isLoggedIn) {
+                    setError('⚠️ Debes iniciar sesión primero');
+                    setTimeout(() => {
+                        window.location.href = 'login.html';
+                    }, 2000);
+                    return;
+                }
                 cargarEmpleados();
-            }, []);
+            }, [isLoggedIn]);
 
             const cargarEmpleados = async () => {
                 setLoading(true);
                 setError('');
                 try {
-                    console.log("🔄 Conectando con backend...");
-                    const response = await fetch('http://localhost:3000/api/empleados');
+                    console.log("🔄 Cargando empleados...");
+                    const response = await fetch('http://25.46.106.44:3000/api/empleados');
                     
                     if (response.ok) {
                         const data = await response.json();
-                        console.log("✅ Datos del backend:", data);
+                        console.log("Empleados cargados:", data.length);
                         setEmployees(data);
+                        setSuccess(`${data.length} empleados cargados correctamente`);
                     } else {
                         throw new Error(`Error ${response.status}: ${response.statusText}`);
                     }
@@ -256,7 +344,6 @@
                     console.error("❌ Error cargando empleados:", error);
                     setError('No se pudieron cargar los empleados. Verifica que el backend esté ejecutándose.');
                     
-                    // Datos de ejemplo como fallback
                     setEmployees([
                         { 
                             Id: 1, 
@@ -277,6 +364,37 @@
                     ]);
                 } finally {
                     setLoading(false);
+                }
+            };
+
+            const handleLogout = async () => {
+                setLogoutLoading(true);
+                try {
+                    const response = await fetch('http://25.46.106.44:3000/api/logout', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            userId: userId,
+                            username: username
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        console.log('✅ Logout exitoso - Bitácora registrada');
+                    } else {
+                        console.log('⚠️ Logout completado pero sin bitácora:', result.message);
+                    }
+                } catch (error) {
+                    console.error('❌ Error en logout (continuando de todas formas):', error);
+                } finally {
+                    localStorage.removeItem('userId');
+                    localStorage.removeItem('username');
+                    localStorage.removeItem('isLoggedIn');
+                    window.location.href = 'login.html';
                 }
             };
 
@@ -302,8 +420,18 @@
                 }));
             };
 
-            const abrirActualizar = (employeeId) => {
-                window.open(`actualizar.html?id=${employeeId}`, '_blank');
+            const abrirActualizar = (employee) => {
+                const employeeData = encodeURIComponent(JSON.stringify({
+                    Id: employee.Id || employee.id,
+                    Nombre: employee.Nombre || employee.nombre,
+                    ValorDocumentoIdentidad: employee.ValorDocumentoIdentidad || employee.cedula,
+                    IdPuesto: employee.IdPuesto || employee.idPuesto,
+                    SaldoVacaciones: employee.SaldoVacaciones || employee.saldoVacaciones,
+                    EsActivo: employee.EsActivo !== undefined ? employee.EsActivo : employee.activo,
+                    PuestoNombre: employee.PuestoNombre || employee.puestoNombre
+                }));
+                
+                window.open(`actualizar.html?id=${employee.Id}&employeeData=${employeeData}`, '_blank');
             };
 
             const abrirFormulario = () => {
@@ -321,29 +449,46 @@
             if (loading) {
                 return React.createElement('div', { className: 'container' },
                     React.createElement('h1', null, 'Lista de Empleados'),
-                    React.createElement('div', { className: 'loading' }, '🔄 Conectando con el servidor...')
+                    React.createElement('div', { className: 'loading' }, '🔄 Cargando empleados...')
+                );
+            }
+
+            if (!isLoggedIn) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('h1', null, 'Acceso Denegado'),
+                    React.createElement('div', { className: 'error-message' }, 
+                        'Debes iniciar sesión primero. Redirigiendo...'
+                    )
                 );
             }
 
             return React.createElement('div', { className: 'container' },
                 React.createElement('h1', null, 'Lista de Empleados'),
                 
-                // Mensaje de error
-                error && React.createElement('div', { className: 'error-message' }, error),
-                
-                // Botón recargar
-                React.createElement('div', { style: { textAlign: 'center', marginBottom: '1rem' } },
+                // Información del usuario
+                React.createElement('div', { className: 'user-info' },
+                    ` Conectado como: ${username} (ID: ${userId}) `,
                     React.createElement('button', {
-                        onClick: cargarEmpleados,
-                        style: { 
-                            padding: '0.5rem 1rem', 
-                            backgroundColor: '#6c757d', 
-                            color: 'white', 
-                            border: 'none', 
-                            borderRadius: '4px',
-                            cursor: 'pointer'
-                        }
-                    }, 'Recargar Datos')
+                        className: 'logout-btn',
+                        onClick: handleLogout,
+                        disabled: logoutLoading
+                    }, logoutLoading ? 'Cerrando sesión...' : 'Cerrar Sesión')
+                ),
+                
+                // Mensajes de éxito y error
+                error && React.createElement('div', { className: 'error-message' }, error),
+                success && React.createElement('div', { className: 'success-message' }, success),
+                
+                // Botones de acción
+                React.createElement('div', { className: 'button-container' },
+                    React.createElement('button', {
+                        onClick: recargarEmpleados,
+                        className: 'btn-secondary'
+                    }, 'Recargar'),
+                    React.createElement('button', {
+                        onClick: abrirFormulario,
+                        className: 'btn-primary'
+                    }, 'Insertar Empleado')
                 ),
 
                 // Filtros
@@ -396,7 +541,8 @@
                                 
                                 return React.createElement('tr', { 
                                     key: id,
-                                    onClick: () => abrirActualizar(id)
+                                    onClick: () => abrirActualizar(employee), 
+                                    style: { cursor: 'pointer' }
                                 },
                                     React.createElement('td', null, id),
                                     React.createElement('td', null, nombre),
@@ -422,14 +568,6 @@
                             )
                         )
                     )
-                ),
-
-                // Botón Insertar
-                React.createElement('div', { className: 'button-container' },
-                    React.createElement('button', { 
-                        className: 'btn-primary',
-                        onClick: abrirFormulario
-                    }, 'Insertar Empleado')
                 ),
 
                 // Formulario modal
