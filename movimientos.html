@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movimientos del Empleado</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background-color: white;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e0e0e0;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #333;
+        }
+
+        .employee-header {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .employee-info h2 {
+            color: #333;
+            margin-bottom: 1rem;
+            font-size: 1.2rem;
+        }
+
+        .info-item {
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .info-value {
+            color: #333;
+        }
+
+        .saldo-vacaciones {
+            text-align: center;
+            padding: 1rem;
+            background: white;
+            border-radius: 8px;
+            border: 2px solid #ff69b4;
+        }
+
+        .saldo-label {
+            font-size: 1rem;
+            color: #666;
+            margin-bottom: 0.5rem;
+        }
+
+        .saldo-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #ff69b4;
+        }
+
+        .movements-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 2rem;
+        }
+
+        .movements-table th,
+        .movements-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 0.9rem;
+        }
+
+        .movements-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            color: #333;
+            position: sticky;
+            top: 0;
+        }
+
+        .movements-table tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background-color: #ff69b4;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #ff1493;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+            font-style: italic;
+        }
+
+        .header-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .positive {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .negative {
+            color: #dc3545;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function Movimientos() {
+            const [employee, setEmployee] = useState(null);
+            const [movimientos, setMovimientos] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                // Obtener ID del empleado de la URL
+                const urlParams = new URLSearchParams(window.location.search);
+                const employeeId = urlParams.get('id');
+
+                if (!employeeId) {
+                    setLoading(false);
+                    return;
+                }
+
+                // Simular carga de datos 
+                setTimeout(() => {
+                    // Datos de ejemplo del empleado
+                    const employeesData = {
+                        '1': { 
+                            id: 1, 
+                            nombre: 'Juan Pérez', 
+                            cedula: '123456789',
+                            saldoVacaciones: 15.5
+                        },
+                        '2': { 
+                            id: 2, 
+                            nombre: 'María García', 
+                            cedula: '987654321',
+                            saldoVacaciones: 8.0
+                        },
+                        '3': { 
+                            id: 3, 
+                            nombre: 'Carlos López', 
+                            cedula: '456123789',
+                            saldoVacaciones: 22.0
+                        }
+                    };
+
+                    const employeeData = employeesData[employeeId];
+                    if (employeeData) {
+                        setEmployee(employeeData);
+                    }
+
+                    // Array vacío
+                    setMovimientos([]);
+                    setLoading(false);
+                }, 1000);
+            }, []);
+
+            const goBack = () => {
+                window.close(); // Cierra esta ventana
+            };
+
+            const insertarMovimiento = () => {
+                // Abrir ventana para insertar movimiento
+                if (employee) {
+                    window.open(`insertar-movimiento.html?id=${employee.id}`, '_blank');
+                }
+            };
+
+            if (loading) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('div', { className: 'loading' }, 'Cargando movimientos...')
+                );
+            }
+
+            if (!employee) {
+                return React.createElement('div', { className: 'container' },
+                    React.createElement('h1', null, 'Empleado no encontrado'),
+                    React.createElement('button', { 
+                        className: 'btn btn-secondary',
+                        onClick: goBack
+                    }, 'Cerrar')
+                );
+            }
+
+            return React.createElement('div', { className: 'container' },
+                // Header con acciones
+                React.createElement('div', { className: 'header-actions' },
+                    React.createElement('button', { 
+                        className: 'btn btn-secondary',
+                        onClick: goBack
+                    }, '← Cerrar'),
+                    React.createElement('button', {
+                        className: 'btn btn-primary',
+                        onClick: insertarMovimiento
+                    }, 'Insertar Movimiento')
+                ),
+                
+                React.createElement('h1', null, 'Movimientos de Vacaciones'),
+
+                // Información del empleado
+                React.createElement('div', { className: 'employee-header' },
+                    React.createElement('div', { className: 'employee-info' },
+                        React.createElement('h2', null, 'Información del Empleado'),
+                        React.createElement('div', { className: 'info-item' },
+                            React.createElement('span', { className: 'info-label' }, 'Nombre:'),
+                            React.createElement('span', { className: 'info-value' }, employee.nombre)
+                        ),
+                        React.createElement('div', { className: 'info-item' },
+                            React.createElement('span', { className: 'info-label' }, 'Cédula:'),
+                            React.createElement('span', { className: 'info-value' }, employee.cedula)
+                        ),
+                        React.createElement('div', { className: 'info-item' },
+                            React.createElement('span', { className: 'info-label' }, 'ID Empleado:'),
+                            React.createElement('span', { className: 'info-value' }, employee.id)
+                        )
+                    ),
+                    React.createElement('div', { className: 'saldo-vacaciones' },
+                        React.createElement('div', { className: 'saldo-label' }, 'Saldo Actual de Vacaciones'),
+                        React.createElement('div', { className: 'saldo-value' }, `${employee.saldoVacaciones} días`)
+                    )
+                ),
+
+                // Tabla de movimientos
+                React.createElement('h2', { style: { marginBottom: '1rem', color: '#333' } }, 'Historial de Movimientos'),
+                React.createElement('table', { className: 'movements-table' },
+                    React.createElement('thead', null,
+                        React.createElement('tr', null,
+                            React.createElement('th', null, 'Fecha'),
+                            React.createElement('th', null, 'Tipo de Movimiento'),
+                            React.createElement('th', null, 'Monto'),
+                            React.createElement('th', null, 'Nuevo Saldo'),
+                            React.createElement('th', null, 'Usuario'),
+                            React.createElement('th', null, 'IP'),
+                            React.createElement('th', null, 'Estampa de Tiempo')
+                        )
+                    ),
+                    React.createElement('tbody', null,
+                        movimientos.length > 0 ? (
+                            movimientos.map(movimiento =>
+                                React.createElement('tr', { key: movimiento.id },
+                                    React.createElement('td', null, movimiento.fecha),
+                                    React.createElement('td', null, movimiento.tipoMovimiento),
+                                    React.createElement('td', { 
+                                        className: movimiento.monto >= 0 ? 'positive' : 'negative'
+                                    }, `${movimiento.monto >= 0 ? '+' : ''}${movimiento.monto} días`),
+                                    React.createElement('td', null, `${movimiento.nuevoSaldo} días`),
+                                    React.createElement('td', null, movimiento.usuario),
+                                    React.createElement('td', null, movimiento.ip),
+                                    React.createElement('td', null, movimiento.estampaTiempo)
+                                )
+                            )
+                        ) : (
+                            React.createElement('tr', null,
+                                React.createElement('td', { 
+                                    colSpan: '7', 
+                                    style: { textAlign: 'center', padding: '2rem' } 
+                                }, 'No hay movimientos registrados para este empleado')
+                            )
+                        )
+                    )
+                )
+            );
+        }
+
+        // Renderizar la aplicación
+        ReactDOM.render(React.createElement(Movimientos), document.getElementById('root'));
+    </script>
+</body>
+</html>
